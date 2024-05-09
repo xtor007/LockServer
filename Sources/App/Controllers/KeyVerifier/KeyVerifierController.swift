@@ -12,21 +12,22 @@ struct KeyVerifierController: RouteCollection {
     
     private let controllerPath: PathComponent = "verifier"
     
+    private let queryCodeParameterName = "code"
+    
     func boot(routes: any RoutesBuilder) throws {
         let verifierRoutes = routes.grouped(controllerPath)
-        verifierRoutes.post(
+        verifierRoutes.get(
             KeyVerifierControllerRoutes.verifyCard.route,
             use: verifyCard
         )
     }
     
-    @Sendable func verifyCard(req: Request) async throws -> Bool {
-        do {
-            let cardCode = try req.content.decode(CardCode.self)
-            return cardCode.code == "33f22f11" // hardcode
-        } catch {
-            throw Abort(.badRequest)
+    @Sendable func verifyCard(req: Request) async throws -> String {
+        guard let cardCode = try? req.query.get(String.self, at: queryCodeParameterName) else {
+            return ArduinoAnswer.failed.message
         }
+        print("code is \(cardCode)")
+        return  ArduinoAnswer.build(for: cardCode == "33F22F11").message // hardcode
     }
     
 }
