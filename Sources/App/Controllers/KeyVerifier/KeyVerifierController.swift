@@ -20,6 +20,10 @@ struct KeyVerifierController: RouteCollection {
             KeyVerifierControllerRoutes.verifyCard.route,
             use: verifyCard
         )
+        verifierRoutes.get(
+            KeyVerifierControllerRoutes.verifyFinger.route,
+            use: verifyFinger
+        )
     }
     
     @Sendable func verifyCard(req: Request) async throws -> String {
@@ -28,6 +32,14 @@ struct KeyVerifierController: RouteCollection {
         }
         print("code is \(cardCode)")
         return  ArduinoAnswer.build(for: cardCode == "33F22F11").message // hardcode
+    }
+    
+    @Sendable func verifyFinger(req: Request) async throws -> String {
+        guard let fingerCode = try? req.query.get(String.self, at: queryCodeParameterName) else {
+            return ArduinoAnswer.failed.message
+        }
+        print("code is \(fingerCode)")
+        return  ArduinoAnswer.good.message // hardcode
     }
     
 }

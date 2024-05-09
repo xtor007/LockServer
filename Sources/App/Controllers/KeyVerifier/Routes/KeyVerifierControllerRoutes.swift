@@ -10,12 +10,14 @@ import Vapor
 
 enum KeyVerifierControllerRoutes: RoutesDescription {
     
-    case verifyCard
+    case verifyCard, verifyFinger
     
     var route: PathComponent {
         switch self {
         case .verifyCard:
             "verifyCard"
+        case .verifyFinger:
+            "verifyFinger"
         }
     }
     
