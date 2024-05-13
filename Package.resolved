@@ -1,5 +1,5 @@
 {
-  "originHash" : "6dd320dae819c0a48cecf070a319b85f0e2a22a0a2a9b31958175cfe2bbf4a67",
+  "originHash" : "64b92d46a00d2c5d6679b65ac4372b8b4260ced8f63c46f43b7b025cfe6c2dfb",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -29,6 +29,33 @@
       }
     },
     {
+      "identity" : "fluent",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/vapor/fluent.git",
+      "state" : {
+        "revision" : "d831ac5e6a514dd8aa8d5499bb04be3983be1112",
+        "version" : "4.10.0"
+      }
+    },
+    {
+      "identity" : "fluent-kit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/vapor/fluent-kit.git",
+      "state" : {
+        "revision" : "ed4cfa9edcadda3bf1b02a9842cfb60b8cf9b77b",
+        "version" : "1.48.3"
+      }
+    },
+    {
+      "identity" : "fluent-mysql-driver",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/vapor/fluent-mysql-driver.git",
+      "state" : {
+        "revision" : "26f142d0fe1ec284b8392cc2ecbd859d73d82561",
+        "version" : "4.5.0"
+      }
+    },
+    {
       "identity" : "multipart-kit",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/vapor/multipart-kit.git",
@@ -38,12 +65,39 @@
       }
     },
     {
+      "identity" : "mysql-kit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/vapor/mysql-kit.git",
+      "state" : {
+        "revision" : "395a6eaa3d617fa6a1518b41a88888574921998c",
+        "version" : "4.8.0"
+      }
+    },
+    {
+      "identity" : "mysql-nio",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/vapor/mysql-nio.git",
+      "state" : {
+        "revision" : "605fe1d67cc87a52fe248799c9744f3edd976b92",
+        "version" : "1.7.1"
+      }
+    },
+    {
       "identity" : "routing-kit",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/vapor/routing-kit.git",
       "state" : {
         "revision" : "2a92a7eac411a82fb3a03731be5e76773ebe1b3e",
         "version" : "4.9.0"
+      }
+    },
+    {
+      "identity" : "sql-kit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/vapor/sql-kit.git",
+      "state" : {
+        "revision" : "9afdc96113b673819ccdc4819f77e901c698a87a",
+        "version" : "3.29.3"
       }
     },
     {

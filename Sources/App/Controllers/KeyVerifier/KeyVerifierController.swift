@@ -10,9 +10,15 @@ import Vapor
 
 struct KeyVerifierController: RouteCollection {
     
+    private let cardCodeVerifier: CardCodeVerifier
+    
     private let controllerPath: PathComponent = "verifier"
     
     private let queryCodeParameterName = "code"
+    
+    init(cardCodeVerifier: CardCodeVerifier) {
+        self.cardCodeVerifier = cardCodeVerifier
+    }
     
     func boot(routes: any RoutesBuilder) throws {
         let verifierRoutes = routes.grouped(controllerPath)
@@ -31,7 +37,8 @@ struct KeyVerifierController: RouteCollection {
             return ArduinoAnswer.failed.message
         }
         print("code is \(cardCode)")
-        return  ArduinoAnswer.build(for: cardCode == "33F22F11").message // hardcode
+        let isCodeNorm = try await cardCodeVerifier.verify(cardCode)
+        return  ArduinoAnswer.build(for: isCodeNorm).message
     }
     
     @Sendable func verifyFinger(req: Request) async throws -> String {

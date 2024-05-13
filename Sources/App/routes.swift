@@ -1,9 +1,13 @@
 import Vapor
 
 func routes(_ app: Application) throws {
-    try app.register(collection: KeyVerifierController())
+    let dbManager = MySQLManager.shared
+    
+    try app.register(collection: KeyVerifierController(
+        cardCodeVerifier: CardCodeVerifier(db: dbManager))
+    )
     
     app.get("") { req in
-        "ok"
+        return "ok"
     }
 }
