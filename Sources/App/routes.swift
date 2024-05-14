@@ -10,6 +10,8 @@ func routes(_ app: Application) throws {
     
     try app.register(collection: AuthController(db: dbManager))
     
+    try app.register(collection: OpenController(db: dbManager))
+    
     app.get("") { req in
         return "ok"
     }

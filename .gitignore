@@ -12,3 +12,4 @@ db.sqlite
 .vscode
 MySQLConstants.swift
 AuthConstants.swift
+ArduinoConstants.swift
