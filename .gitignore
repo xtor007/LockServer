@@ -11,3 +11,4 @@ db.sqlite
 ! .env.example
 .vscode
 MySQLConstants.swift
+AuthConstants.swift

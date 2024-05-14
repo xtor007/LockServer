@@ -60,10 +60,20 @@ extension MySQLManager {
         try await newEnter.create(on: db)
     }
     
+    func getUser(for email: String) async throws -> EmployerDBModel {
+        guard let db else { throw MySQLError.noDB }
+        guard let employer = try await Employer.query(on: db)
+            .filter(\.$email == email)
+            .first() else {
+            throw MySQLError.failedAuth
+        }
+        return employer
+    }
+    
 }
 
 // MARK: - Errors
 
 enum MySQLError: Error {
-    case noDB
+    case noDB, failedAuth
 }

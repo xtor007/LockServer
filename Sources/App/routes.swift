@@ -8,6 +8,8 @@ func routes(_ app: Application) throws {
         fingerVerifier: FingerVerifier(db: dbManager))
     )
     
+    try app.register(collection: AuthController(db: dbManager))
+    
     app.get("") { req in
         return "ok"
     }
