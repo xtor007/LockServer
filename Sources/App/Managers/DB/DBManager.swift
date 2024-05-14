@@ -12,6 +12,7 @@ protocol DBManager: AnyObject {
     func getCards(forHash hash: Int) async throws -> [CardDBModel]
     func addEnter(for id: UUID) async throws
     func getUser(for email: String) async throws -> EmployerDBModel
+    func updatePassword(for userID: UUID, newPassword: String) async throws
 }
 
 protocol CardDBModel {

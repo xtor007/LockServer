@@ -13,3 +13,4 @@ db.sqlite
 MySQLConstants.swift
 AuthConstants.swift
 ArduinoConstants.swift
+SMTPConstants.swift

@@ -1,5 +1,5 @@
 {
-  "originHash" : "3cd23b48d322530c5fd5e6db80891c9de911e1c45d0c99665ee05dffc2a13329",
+  "originHash" : "f6505ac3ee5c35c932b7ae882404d3fdf884ac819979671ebd5438b0d75096c6",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -17,6 +17,33 @@
       "state" : {
         "revision" : "7ece208cd401687641c88367a00e3ea2b04311f1",
         "version" : "1.19.0"
+      }
+    },
+    {
+      "identity" : "bluecryptor",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Kitura/BlueCryptor.git",
+      "state" : {
+        "revision" : "ee5880e031da4c609f372cf7472476ab51d5dd19",
+        "version" : "1.0.200"
+      }
+    },
+    {
+      "identity" : "bluesocket",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Kitura/BlueSocket.git",
+      "state" : {
+        "revision" : "c9894fd117457f1d006575fbfb2fdfd6f79eac03",
+        "version" : "1.0.200"
+      }
+    },
+    {
+      "identity" : "bluesslservice",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Kitura/BlueSSLService.git",
+      "state" : {
+        "revision" : "ae5889d2a8b068d2d3ab91ec73aa8f557c03cd8a",
+        "version" : "1.0.200"
       }
     },
     {
@@ -71,6 +98,15 @@
       "state" : {
         "revision" : "c2595b9ad7f512d7f334830b4df1fed6e917946a",
         "version" : "4.13.4"
+      }
+    },
+    {
+      "identity" : "loggerapi",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Kitura/LoggerAPI.git",
+      "state" : {
+        "revision" : "e82d34eab3f0b05391082b11ea07d3b70d2f65bb",
+        "version" : "1.9.200"
       }
     },
     {
@@ -233,6 +269,15 @@
       "state" : {
         "revision" : "0a5bc04095a675662cf24757cc0640aa2204253b",
         "version" : "1.0.2"
+      }
+    },
+    {
+      "identity" : "swift-smtp",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Kitura/Swift-SMTP",
+      "state" : {
+        "revision" : "d892f67ddbdde635787a1f2f96e654e91a2edbaa",
+        "version" : "5.1.200"
       }
     },
     {

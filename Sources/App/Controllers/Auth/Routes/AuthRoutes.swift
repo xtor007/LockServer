@@ -10,7 +10,7 @@ import Vapor
 
 enum AuthRoutes: RoutesDescription {
     
-    case getToken, refreshToken
+    case getToken, refreshToken, sendEmailForChangePassword, changePassword
     
     var route: PathComponent {
         switch self {
@@ -18,6 +18,10 @@ enum AuthRoutes: RoutesDescription {
             "getToken"
         case .refreshToken:
             "refresh"
+        case .sendEmailForChangePassword:
+            "changePasswordEmail"
+        case .changePassword:
+            "changePassword"
         }
     }
     

@@ -70,10 +70,19 @@ extension MySQLManager {
         return employer
     }
     
+    func updatePassword(for userID: UUID, newPassword: String) async throws {
+        guard let db else { throw MySQLError.noDB }
+        guard let employer = try await Employer.query(on: db).filter(\.$id == userID).first() else {
+            throw MySQLError.userNotFount
+        }
+        employer.password = newPassword
+        try await employer.update(on: db)
+    }
+    
 }
 
 // MARK: - Errors
 
 enum MySQLError: Error {
-    case noDB, failedAuth
+    case noDB, failedAuth, userNotFount
 }
