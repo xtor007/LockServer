@@ -12,6 +12,8 @@ func routes(_ app: Application) throws {
     
     try app.register(collection: OpenController(db: dbManager))
     
+    try app.register(collection: ValidServerController())
+    
     app.get("") { req in
         return "ok"
     }
