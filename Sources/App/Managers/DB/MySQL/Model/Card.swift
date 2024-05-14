@@ -20,13 +20,13 @@ final class Card: Model, Content, CardDBModel {
     @Field(key: CardSQLValues.code)
     var code: String
     
-    @OptionalParent(key: CardSQLValues.employer)
-    var employer: Employer?
+    @Parent(key: CardSQLValues.employer)
+    var employer: Employer
 
     init() { }
 
-    init(id: UUID? = nil, hash: Int, code: String, employerID: Employer.IDValue?) {
-        self.id = id
+    init(hash: Int, code: String, employerID: Employer.IDValue?) {
+        self.id = UUID()
         self.hash = hash
         self.code = code
         if let employerID = employerID {
@@ -35,7 +35,7 @@ final class Card: Model, Content, CardDBModel {
     }
     
     var employerID: UUID? {
-        employer?.id
+        employer.id
     }
 }
 

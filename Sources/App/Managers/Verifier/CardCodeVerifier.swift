@@ -18,11 +18,22 @@ class CardCodeVerifier {
     func verify(_ code: String) async throws -> Bool {
         let hash = calculateHash(for: code)
         let cards = try await db.getCards(forHash: hash)
-        guard let card = cards.first(where: { $0.code == code }) else {
+        guard let card = cards.first(where: { $0.code == code && $0.employerID != nil }),
+              let employerID = card.employerID else {
             return false
         }
-        // TODO: Record
+        addEnter(for: employerID)
         return true
+    }
+    
+    private func addEnter(for id: UUID) {
+        Task {
+            do {
+                try await db.addEnter(for: id)
+            } catch {
+                print(error)
+            }
+        }
     }
     
     private func calculateHash(for code: String) -> Int {

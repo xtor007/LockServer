@@ -10,12 +10,10 @@ import Vapor
 protocol DBManager: AnyObject {
     func setup(_ app: Application)
     func getCards(forHash hash: Int) async throws -> [CardDBModel]
+    func addEnter(for id: UUID) async throws
 }
 
 protocol CardDBModel {
     var code: String { get }
     var employerID: UUID? { get }
-}
-
-protocol EmployerDBModel {
 }

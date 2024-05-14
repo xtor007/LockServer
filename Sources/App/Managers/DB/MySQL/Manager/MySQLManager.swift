@@ -29,6 +29,7 @@ class MySQLManager: DBManager {
         ), as: .mysql)
         app.migrations.add(CreateEmployer())
         app.migrations.add(CreateCard())
+        app.migrations.add(CreateEnter())
         do {
             try app.autoMigrate().wait()
         } catch {
@@ -45,7 +46,18 @@ extension MySQLManager {
     
     func getCards(forHash hash: Int) async throws -> [any CardDBModel] {
         guard let db else { throw MySQLError.noDB }
-        return try await Card.query(on: db).filter(\.$hash == hash).all()
+        return try await Card.query(on: db).filter(\.$hash == hash).with(\.$employer).all()
+    }
+    
+    func addEnter(for id: UUID) async throws {
+        guard let db else { throw MySQLError.noDB }
+        let lastEnter = try await Enter.query(on: db)
+            .filter(\.$employer.$id == id)
+            .sort(\.$time, .descending)
+            .first()
+        let isOn = !(lastEnter?.isOn ?? false)
+        let newEnter = Enter(employerID: id, isOn: isOn)
+        try await newEnter.create(on: db)
     }
     
 }

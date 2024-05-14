@@ -8,7 +8,7 @@
 import Fluent
 import Vapor
 
-final class Employer: Model, Content, EmployerDBModel {
+final class Employer: Model, Content {
     static let schema = EmployerSQLValues.schema
     
     @ID(key: .id)
