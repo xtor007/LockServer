@@ -70,7 +70,7 @@ struct AuthController: RouteCollection {
 // MARK: - Methods
 
 extension AuthController {
-    private func makeTokens(for employer: EmployerDBModel, with req: Request) throws -> AuthTokens {
+    private func makeTokens(for employer: any EmployerDBModel, with req: Request) throws -> AuthTokens {
         guard let email = employer.email else {
             throw HTTPClientError.invalidHeaderFieldNames(["login"])
         }

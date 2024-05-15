@@ -60,7 +60,7 @@ extension MySQLManager {
         try await newEnter.create(on: db)
     }
     
-    func getUser(for email: String) async throws -> EmployerDBModel {
+    func getUser(for email: String) async throws -> any EmployerDBModel {
         guard let db else { throw MySQLError.noDB }
         guard let employer = try await Employer.query(on: db)
             .filter(\.$email == email)
@@ -77,6 +77,15 @@ extension MySQLManager {
         }
         employer.password = newPassword
         try await employer.update(on: db)
+    }
+    
+    func getLogs(for userId: UUID, after date: Date?) async throws -> [any EnterDBModel] {
+        guard let db else { throw MySQLError.noDB }
+        return try await Enter.query(on: db)
+            .with(\.$employer)
+            .filter(\.$employer.$id == userId)
+            .filter(\.$time > date ?? .distantPast)
+            .all()
     }
     
 }

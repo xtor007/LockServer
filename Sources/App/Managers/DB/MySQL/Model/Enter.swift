@@ -8,7 +8,7 @@
 import Fluent
 import Vapor
 
-final class Enter: Model, Content {
+final class Enter: EnterDBModel, Model, Content {
     static let schema = EnterSQLValues.schema
     
     @ID(key: .id)
@@ -18,14 +18,14 @@ final class Enter: Model, Content {
     var employer: Employer
     
     @Field(key: EnterSQLValues.time)
-    var time: Date?
+    var time: Date
     
     @Field(key: EnterSQLValues.isOn)
-    var isOn: Bool?
+    var isOn: Bool
 
     init() { }
 
-    init(employerID: UUID, time: Date = .now, isOn: Bool? = nil) {
+    init(employerID: UUID, time: Date = .now, isOn: Bool) {
         self.id = UUID()
         self.$employer.id = employerID
         self.time = time
