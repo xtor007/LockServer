@@ -25,6 +25,7 @@ struct InfoController: RouteCollection {
         protected.get(InfoRoutes.getInfo.route, use: getInfo)
         protected.post(InfoRoutes.getLogs.route, use: getLogs)
         protected.get(InfoRoutes.getStatistic.route, use: getStatistic)
+        protected.get(InfoRoutes.allUsers.route, use: getAll)
     }
     
     @Sendable func getInfo(req: Request) async throws -> EmployerModel {
@@ -51,6 +52,24 @@ struct InfoController: RouteCollection {
         let enters = try await db.getLogs(for: id, after: nil)
         let averageTime = StatisticManager(enters: enters).averageTime
         return Statistic(averageTime: averageTime)
+    }
+    
+    @Sendable func getAll(req: Request) async throws -> Employers {
+        let employer = try req.auth.require(Employer.self)
+        guard employer.isAdmin else { throw GetInfoError.noAccess }
+        let employers = try await db.getAllEmployers()
+        var employersWithStatistic = [EmployerWithStatistic]()
+        for model in employers {
+            if let id = model.id {
+                let logs = try await db.getLogs(for: id, after: nil)
+                let averageTime = StatisticManager(enters: logs).averageTime
+                employersWithStatistic.append(EmployerWithStatistic(
+                    employer: model.makeModel(),
+                    statistic: Statistic(averageTime: averageTime)
+                ))
+            }
+        }
+        return Employers(employers: employersWithStatistic)
     }
     
 }

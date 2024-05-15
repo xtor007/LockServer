@@ -31,6 +31,9 @@ class StatisticManager {
             summaryTime += thisDayTime
             thisDayTime = 0
         }
+        if daysCount == 0 {
+            return 0
+        }
         return summaryTime / Double(daysCount)
     }
     

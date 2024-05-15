@@ -88,6 +88,11 @@ extension MySQLManager {
             .all()
     }
     
+    func getAllEmployers() async throws -> [any EmployerDBModel] {
+        guard let db else { throw MySQLError.noDB }
+        return try await Employer.query(on: db).all()
+    }
+    
 }
 
 // MARK: - Errors

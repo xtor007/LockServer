@@ -14,6 +14,7 @@ protocol DBManager: AnyObject {
     func getUser(for email: String) async throws -> any EmployerDBModel
     func updatePassword(for userID: UUID, newPassword: String) async throws
     func getLogs(for userId: UUID, after date: Date?) async throws -> [EnterDBModel]
+    func getAllEmployers() async throws -> [EmployerDBModel]
 }
 
 // MARK: - DB Models interfaces

@@ -9,7 +9,7 @@ import Vapor
 
 enum InfoRoutes: RoutesDescription {
     
-    case getInfo, getLogs, getStatistic
+    case getInfo, getLogs, getStatistic, allUsers
     
     var route: PathComponent {
         switch self {
@@ -19,6 +19,8 @@ enum InfoRoutes: RoutesDescription {
             "logs"
         case .getStatistic:
             "statistic"
+        case .allUsers:
+            "all"
         }
     }
     
