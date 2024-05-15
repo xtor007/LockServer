@@ -17,6 +17,8 @@ func routes(_ app: Application) throws {
     
     try app.register(collection: InfoController(db: dbManager))
     
+    try app.register(collection: CommantController(db: dbManager, mail: mailManager))
+    
     app.get("") { req in
         return "ok"
     }

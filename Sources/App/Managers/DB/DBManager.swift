@@ -12,9 +12,12 @@ protocol DBManager: AnyObject {
     func getCards(forHash hash: Int) async throws -> [CardDBModel]
     func addEnter(for id: UUID) async throws
     func getUser(for email: String) async throws -> any EmployerDBModel
+    func getUser(by id: UUID) async throws -> any EmployerDBModel
     func updatePassword(for userID: UUID, newPassword: String) async throws
     func getLogs(for userId: UUID, after date: Date?) async throws -> [EnterDBModel]
     func getAllEmployers() async throws -> [EmployerDBModel]
+    func removeUser(with id: UUID) async throws
+    func addUser(_ user: EmployerModel, password: String) async throws
 }
 
 // MARK: - DB Models interfaces

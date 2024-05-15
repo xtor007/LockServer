@@ -9,4 +9,5 @@ import Foundation
 
 protocol MailManager {
     func sendCode(_ code: String, to email: String)
+    func sendPassword(_ password: String, to email: String)
 }

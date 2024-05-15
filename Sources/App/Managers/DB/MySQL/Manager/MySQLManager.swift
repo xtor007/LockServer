@@ -65,7 +65,17 @@ extension MySQLManager {
         guard let employer = try await Employer.query(on: db)
             .filter(\.$email == email)
             .first() else {
-            throw MySQLError.failedAuth
+            throw MySQLError.userNotFound
+        }
+        return employer
+    }
+    
+    func getUser(by id: UUID) async throws -> any EmployerDBModel {
+        guard let db else { throw MySQLError.noDB }
+        guard let employer = try await Employer.query(on: db)
+            .filter(\.$id == id)
+            .first() else {
+            throw MySQLError.userNotFound
         }
         return employer
     }
@@ -73,7 +83,7 @@ extension MySQLManager {
     func updatePassword(for userID: UUID, newPassword: String) async throws {
         guard let db else { throw MySQLError.noDB }
         guard let employer = try await Employer.query(on: db).filter(\.$id == userID).first() else {
-            throw MySQLError.userNotFount
+            throw MySQLError.userNotFound
         }
         employer.password = newPassword
         try await employer.update(on: db)
@@ -93,10 +103,33 @@ extension MySQLManager {
         return try await Employer.query(on: db).all()
     }
     
+    func removeUser(with id: UUID) async throws {
+        guard let db else { throw MySQLError.noDB }
+        guard let employer = try await getUser(by: id) as? Employer else {
+            throw MySQLError.userNotFound
+        }
+        try await db.query(Enter.self).with(\.$employer).filter(\.$employer.$id == id).delete()
+        try await db.query(Card.self).with(\.$employer).filter(\.$employer.$id == id).delete()
+        try await employer.delete(on: db)
+    }
+    
+    func addUser(_ user: EmployerModel, password: String) async throws {
+        guard let db else { throw MySQLError.noDB }
+        let employer = Employer(
+            name: user.name,
+            surname: user.surname,
+            department: user.department,
+            email: user.email,
+            password: password,
+            isAdmin: user.isAdmin
+        )
+        try await employer.create(on: db)
+    }
+    
 }
 
 // MARK: - Errors
 
 enum MySQLError: Error {
-    case noDB, failedAuth, userNotFount
+    case noDB, failedAuth, userNotFound
 }
