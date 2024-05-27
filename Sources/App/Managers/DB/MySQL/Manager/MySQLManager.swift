@@ -49,6 +49,11 @@ extension MySQLManager {
         return try await Card.query(on: db).filter(\.$hash == hash).with(\.$employer).all()
     }
     
+    func getFinger(forCode code: Int) async throws -> (any FingerDBModel)? {
+        guard let db else { throw MySQLError.noDB }
+        return try await Finger.query(on: db).filter(\.$code == code).with(\.$employer).first()
+    }
+    
     func addEnter(for id: UUID) async throws {
         guard let db else { throw MySQLError.noDB }
         let lastEnter = try await Enter.query(on: db)

@@ -10,6 +10,7 @@ import Vapor
 protocol DBManager: AnyObject {
     func setup(_ app: Application)
     func getCards(forHash hash: Int) async throws -> [CardDBModel]
+    func getFinger(forCode code: Int) async throws -> FingerDBModel?
     func addEnter(for id: UUID) async throws
     func getUser(for email: String) async throws -> any EmployerDBModel
     func getUser(by id: UUID) async throws -> any EmployerDBModel
@@ -24,6 +25,11 @@ protocol DBManager: AnyObject {
 
 protocol CardDBModel {
     var code: String { get }
+    var employerID: UUID? { get }
+}
+
+protocol FingerDBModel {
+    var code: Int { get }
     var employerID: UUID? { get }
 }
 

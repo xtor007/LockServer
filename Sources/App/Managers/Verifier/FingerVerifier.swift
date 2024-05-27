@@ -16,8 +16,25 @@ class FingerVerifier {
     }
     
     func verify(_ code: String) async throws -> Bool {
-        // TODO: hardcode
+        guard let code = Int(code) else { throw FingerVerifierError.failedCode }
+        guard let finger = try await db.getFinger(forCode: code) else { throw FingerVerifierError.failedCode }
+        guard let id = finger.employerID else { throw FingerVerifierError.failedID }
+        addEnter(for: id)
         return true
     }
     
+    private func addEnter(for id: UUID) {
+        Task {
+            do {
+                try await db.addEnter(for: id)
+            } catch {
+                print(error)
+            }
+        }
+    }
+    
+}
+
+enum FingerVerifierError: Error {
+    case failedCode, failedID
 }
