@@ -115,6 +115,7 @@ extension MySQLManager {
         }
         try await db.query(Enter.self).with(\.$employer).filter(\.$employer.$id == id).delete()
         try await db.query(Card.self).with(\.$employer).filter(\.$employer.$id == id).delete()
+        try await db.query(Finger.self).with(\.$employer).filter(\.$employer.$id == id).delete()
         try await employer.delete(on: db)
     }
     
