@@ -14,4 +14,6 @@ struct EmployerModel: Content {
     let surname: String?
     let department: String?
     let email: String?
+    var hasCard: Bool?
+    var hasFinger: Bool?
 }

@@ -132,6 +132,24 @@ extension MySQLManager {
         try await employer.create(on: db)
     }
     
+    func hasCard(_ id: UUID) async throws -> Bool {
+        guard let db else { throw MySQLError.noDB }
+        let card = try await Card.query(on: db)
+            .with(\.$employer)
+            .filter(\.$employer.$id == id)
+            .first()
+        return card != nil
+    }
+    
+    func hasFinger(_ id: UUID) async throws -> Bool {
+        guard let db else { throw MySQLError.noDB }
+        let finger = try await Card.query(on: db)
+            .with(\.$employer)
+            .filter(\.$employer.$id == id)
+            .first()
+        return finger != nil
+    }
+    
 }
 
 // MARK: - Errors

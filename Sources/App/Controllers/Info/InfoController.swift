@@ -63,8 +63,11 @@ struct InfoController: RouteCollection {
             if let id = model.id {
                 let logs = try await db.getLogs(for: id, after: nil)
                 let averageTime = StatisticManager(enters: logs).averageTime
+                var employer = model.makeModel()
+                employer.hasCard = try await db.hasCard(id)
+                employer.hasFinger = try await db.hasFinger(id)
                 employersWithStatistic.append(EmployerWithStatistic(
-                    employer: model.makeModel(),
+                    employer: employer,
                     statistic: Statistic(averageTime: averageTime)
                 ))
             }

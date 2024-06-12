@@ -19,6 +19,8 @@ protocol DBManager: AnyObject {
     func getAllEmployers() async throws -> [EmployerDBModel]
     func removeUser(with id: UUID) async throws
     func addUser(_ user: EmployerModel, password: String) async throws
+    func hasCard(_ id: UUID) async throws -> Bool
+    func hasFinger(_ id: UUID) async throws -> Bool
 }
 
 // MARK: - DB Models interfaces
@@ -62,7 +64,9 @@ extension EmployerDBModel {
             name: name,
             surname: surname,
             department: department,
-            email: email
+            email: email,
+            hasCard: false,
+            hasFinger: false
         )
     }
 }
