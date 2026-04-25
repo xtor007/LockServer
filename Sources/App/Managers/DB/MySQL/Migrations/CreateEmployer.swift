@@ -17,7 +17,7 @@ struct CreateEmployer: Migration {
             .field(EmployerSQLValues.department, .string)
             .field(EmployerSQLValues.email, .string)
             .field(EmployerSQLValues.password, .string)
-            .field(EmployerSQLValues.isAdmin, .bool, .required, .sql(raw: "0"))
+            .field(EmployerSQLValues.isAdmin, .bool, .required)
             .create()
     }
     

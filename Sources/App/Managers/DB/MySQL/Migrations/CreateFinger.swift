@@ -13,7 +13,7 @@ struct CreateFinger: Migration {
         return database.schema(FingerSQLValues.schema)
             .id()
             .field(FingerSQLValues.code, .int64, .required)
-            .field(FingerSQLValues.employer, .uuid, .references(FingerSQLValues.schema, "id"))
+            .field(FingerSQLValues.employer, .uuid, .references(EmployerSQLValues.schema, "id", onDelete: .cascade))
             .create()
     }
     

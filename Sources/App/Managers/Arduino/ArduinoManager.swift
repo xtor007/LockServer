@@ -18,6 +18,9 @@ final class ArduinoManager {
     private init() {}
     
     func open() async throws -> Bool {
+        if ArduinoConstants.shouldMock {
+            return true
+        }
         let id = generateID()
         let request = try makeRequest(id: id)
         let response: ArduinoResponse = try await network.makeRequest(request)

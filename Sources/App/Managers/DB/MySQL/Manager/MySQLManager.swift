@@ -29,6 +29,7 @@ class MySQLManager: DBManager {
         ), as: .mysql)
         app.migrations.add(CreateEmployer())
         app.migrations.add(CreateCard())
+        app.migrations.add(CreateFinger())
         app.migrations.add(CreateEnter())
         do {
             try app.autoMigrate().wait()
@@ -143,7 +144,7 @@ extension MySQLManager {
     
     func hasFinger(_ id: UUID) async throws -> Bool {
         guard let db else { throw MySQLError.noDB }
-        let finger = try await Card.query(on: db)
+        let finger = try await Finger.query(on: db)
             .with(\.$employer)
             .filter(\.$employer.$id == id)
             .first()
