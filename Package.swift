@@ -4,10 +4,9 @@ import PackageDescription
 let package = Package(
     name: "LockServer",
     platforms: [
-       .macOS(.v13)
+        .macOS(.v13)
     ],
     dependencies: [
-        // 💧 A server-side Swift web framework.
         .package(url: "https://github.com/vapor/vapor.git", from: "4.92.4"),
         .package(url: "https://github.com/vapor/fluent-mysql-driver.git", from: "4.0.0"),
         .package(url: "https://github.com/vapor/fluent.git", from: "4.0.0"),
@@ -15,23 +14,95 @@ let package = Package(
         .package(url: "https://github.com/Kitura/Swift-SMTP", from: "5.1.0")
     ],
     targets: [
+        .target(
+            name: "LockServerContracts",
+            dependencies: [
+                .product(name: "Vapor", package: "vapor"),
+                .product(name: "JWT", package: "jwt")
+            ],
+            path: "contracts/Sources/LockServerContracts",
+            swiftSettings: swiftSettings
+        ),
+        .target(
+            name: "LockServerCore",
+            dependencies: [
+                .target(name: "LockServerContracts"),
+                .product(name: "Vapor", package: "vapor"),
+                .product(name: "Fluent", package: "fluent"),
+                .product(name: "FluentMySQLDriver", package: "fluent-mysql-driver")
+            ],
+            path: "shared/Sources/LockServerCore",
+            swiftSettings: swiftSettings
+        ),
         .executableTarget(
             name: "App",
             dependencies: [
+                .target(name: "LockServerContracts"),
+                .target(name: "LockServerCore"),
+                .product(name: "Vapor", package: "vapor")
+            ],
+            path: "services/api-gateway/Sources/App",
+            swiftSettings: swiftSettings
+        ),
+        .executableTarget(
+            name: "AuthService",
+            dependencies: [
+                .target(name: "LockServerContracts"),
+                .target(name: "LockServerCore"),
                 .product(name: "Vapor", package: "vapor"),
-                .product(name: "FluentMySQLDriver", package: "fluent-mysql-driver"),
                 .product(name: "Fluent", package: "fluent"),
+                .product(name: "FluentMySQLDriver", package: "fluent-mysql-driver"),
                 .product(name: "JWT", package: "jwt"),
                 .product(name: "SwiftSMTP", package: "Swift-SMTP")
             ],
+            path: "services/auth-service/Sources/AuthService",
+            swiftSettings: swiftSettings
+        ),
+        .executableTarget(
+            name: "DirectoryService",
+            dependencies: [
+                .target(name: "LockServerContracts"),
+                .target(name: "LockServerCore"),
+                .product(name: "Vapor", package: "vapor"),
+                .product(name: "Fluent", package: "fluent"),
+                .product(name: "FluentMySQLDriver", package: "fluent-mysql-driver")
+            ],
+            path: "services/directory-service/Sources/DirectoryService",
+            swiftSettings: swiftSettings
+        ),
+        .executableTarget(
+            name: "AccessService",
+            dependencies: [
+                .target(name: "LockServerContracts"),
+                .target(name: "LockServerCore"),
+                .product(name: "Vapor", package: "vapor"),
+                .product(name: "Fluent", package: "fluent"),
+                .product(name: "FluentMySQLDriver", package: "fluent-mysql-driver")
+            ],
+            path: "services/access-service/Sources/AccessService",
+            swiftSettings: swiftSettings
+        ),
+        .executableTarget(
+            name: "DeviceService",
+            dependencies: [
+                .target(name: "LockServerContracts"),
+                .target(name: "LockServerCore"),
+                .product(name: "Vapor", package: "vapor")
+            ],
+            path: "services/device-service/Sources/DeviceService",
             swiftSettings: swiftSettings
         ),
         .testTarget(
-            name: "AppTests",
+            name: "LockServerTests",
             dependencies: [
                 .target(name: "App"),
-                .product(name: "XCTVapor", package: "vapor"),
+                .target(name: "AccessService"),
+                .target(name: "DeviceService"),
+                .target(name: "LockServerCore"),
+                .target(name: "LockServerContracts"),
+                .product(name: "XCTVapor", package: "vapor")
             ],
+            path: "Tests/LockServerTests",
             swiftSettings: swiftSettings
         )
     ]

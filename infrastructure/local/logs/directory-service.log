@@ -1,0 +1,12 @@
+[ NOTICE ] Server started on http://127.0.0.1:8082
+[ INFO ] GET /validate [request-id: 9A6BBF4C-A5DB-4595-9355-CD03EACAEA38]
+[ INFO ] GET /validate [request-id: 142CEBAB-F886-4B15-A481-F07CEADB36A0]
+[ INFO ] GET /internal/directory/employers/22222222-2222-2222-2222-222222222222 [request-id: D94E9609-155D-481C-B2D3-1F0A5BB09170]
+[ INFO ] GET /internal/directory/cards/lookup [request-id: 4BE9AE53-CB98-4E44-AF5D-2C36A2100817]
+[ INFO ] GET /internal/directory/fingers/lookup [request-id: D4502448-4BB5-4FB0-9BCF-998767AC68FA]
+[ INFO ] GET /internal/directory/employers [request-id: 15E5A097-D987-4D93-8542-1632072CFD21]
+[ INFO ] POST /internal/directory/employers [request-id: 766999A0-2A42-4C9A-941B-2B3BA3DE303C]
+[ INFO ] GET /internal/directory/employers [request-id: 7D90FB77-047E-4665-B850-EC04EBD1C602]
+[ INFO ] GET /internal/directory/employers/C5C73DAC-A8F4-46AD-9113-D56B101415DF [request-id: E6172DEE-6A3B-4850-9EFF-0E42401A04DD]
+[ INFO ] DELETE /internal/directory/employers/C5C73DAC-A8F4-46AD-9113-D56B101415DF [request-id: 1C39875F-EB3A-4073-94A1-4D893FE950A2]
+[ INFO ] GET /internal/directory/employers/22222222-2222-2222-2222-222222222222 [request-id: 547FEB7E-85B7-492C-A6D0-A314E8B5ADB7]

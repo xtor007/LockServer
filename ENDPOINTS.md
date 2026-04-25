@@ -2,7 +2,7 @@
 
 ## Base URL
 
-- Local: `http://127.0.0.1:8080`
+- Gateway: `http://127.0.0.1:8080`
 
 ## Test Users
 
@@ -15,24 +15,27 @@
 
 ## Local Run
 
-Start MySQL for local backend:
-
-```bash
-rm -rf /tmp/lockserver-mysql-data
-mkdir -p /tmp/lockserver-mysql-data /tmp/lockserver-mysql-run
-/usr/local/mysql/bin/mysqld --initialize-insecure --basedir=/usr/local/mysql --datadir=/tmp/lockserver-mysql-data
-/usr/local/mysql/bin/mysqld --daemonize --basedir=/usr/local/mysql --datadir=/tmp/lockserver-mysql-data --socket=/tmp/lockserver-mysql.sock --pid-file=/tmp/lockserver-mysql-run/mysqld.pid --port=3306 --bind-address=127.0.0.1 --mysqlx=0 --log-error=/tmp/lockserver-mysql-run/mysqld.err
-/usr/local/mysql/bin/mysql --socket=/tmp/lockserver-mysql.sock -uroot -e "ALTER USER 'root'@'localhost' IDENTIFIED BY 'qazwsx123'; CREATE USER IF NOT EXISTS 'root'@'127.0.0.1' IDENTIFIED BY 'qazwsx123'; GRANT ALL PRIVILEGES ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION; CREATE DATABASE IF NOT EXISTS lockService CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; FLUSH PRIVILEGES;"
-```
-
-Start backend:
+Build and start the full microservices stack:
 
 ```bash
 cd /Users/khramchenko/Desktop/кпи/diplom/code/LockServer
-env HOME=/tmp/codex-home CLANG_MODULE_CACHE_PATH=/tmp/clang-module-cache LOCKSERVER_MOCK_ARDUINO=1 swift run App serve --env development --hostname 0.0.0.0 --port 8080
+env HOME=/tmp/codex-home CLANG_MODULE_CACHE_PATH=/tmp/clang-module-cache swift build
+./infrastructure/local/start-stack.sh
 ```
 
-`LOCKSERVER_MOCK_ARDUINO=1` makes `/open/open` work locally without a real Arduino.
+Keep that terminal open. From a second terminal, verify all public routes through the gateway:
+
+```bash
+./infrastructure/local/verify-endpoints.sh
+```
+
+Stop the stack:
+
+```bash
+./infrastructure/local/stop-stack.sh
+```
+
+Local development uses mock device mode by default, so `/open/open` works without a real Arduino.
 
 ## Auth Types
 
@@ -252,9 +255,6 @@ Authorization: Bearer <refresh_token>
   "isSuccess": true
 }
 ```
-
-- Note:
-  - locally this is expected to work only when server is started with `LOCKSERVER_MOCK_ARDUINO=1`
 
 ## Admin Endpoints
 
