@@ -17,6 +17,10 @@ public enum ServiceEndpoints {
         try baseURL(hostKey: "LOCKSERVER_DEVICE_HOST", portKey: "LOCKSERVER_DEVICE_PORT", defaultPort: 8084)
     }
 
+    public static func attendanceAnalysisBaseURL() throws -> String {
+        try baseURL(hostKey: "LOCKSERVER_ATTENDANCE_ANALYSIS_HOST", portKey: "LOCKSERVER_ATTENDANCE_ANALYSIS_PORT", defaultPort: 8085)
+    }
+
     private static func baseURL(hostKey: String, portKey: String, defaultPort: Int) throws -> String {
         let host = try EnvironmentValue.string(hostKey, default: "127.0.0.1")
         let port = try EnvironmentValue.int(portKey, default: defaultPort)

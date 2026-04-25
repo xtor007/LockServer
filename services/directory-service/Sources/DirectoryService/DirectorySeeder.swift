@@ -6,6 +6,13 @@ enum DirectorySeeder {
         for seedUser in SeedUsers.all {
             let employer: DirectoryEmployer
             if let existing = try await DirectoryEmployer.find(seedUser.id, on: database) {
+                existing.name = seedUser.name
+                existing.surname = seedUser.surname
+                existing.department = seedUser.department
+                existing.email = seedUser.email
+                existing.isAdmin = seedUser.isAdmin
+                existing.workNormMinutes = seedUser.workNormMinutes
+                try await existing.update(on: database)
                 employer = existing
             } else {
                 let newEmployer = DirectoryEmployer(
@@ -14,7 +21,8 @@ enum DirectorySeeder {
                     surname: seedUser.surname,
                     department: seedUser.department,
                     email: seedUser.email,
-                    isAdmin: seedUser.isAdmin
+                    isAdmin: seedUser.isAdmin,
+                    workNormMinutes: seedUser.workNormMinutes
                 )
                 try await newEmployer.create(on: database)
                 employer = newEmployer

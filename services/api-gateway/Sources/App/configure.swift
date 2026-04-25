@@ -9,7 +9,8 @@ func configure(_ app: Application) async throws {
     let controller = try GatewayController(
         authBaseURL: ServiceEndpoints.authBaseURL(),
         directoryBaseURL: ServiceEndpoints.directoryBaseURL(),
-        accessBaseURL: ServiceEndpoints.accessBaseURL()
+        accessBaseURL: ServiceEndpoints.accessBaseURL(),
+        attendanceAnalysisBaseURL: ServiceEndpoints.attendanceAnalysisBaseURL()
     )
 
     try app.register(collection: controller)

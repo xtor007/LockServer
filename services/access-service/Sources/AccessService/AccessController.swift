@@ -30,6 +30,7 @@ struct AccessController: RouteCollection {
 
         let `internal` = routes.grouped("internal", "access")
         `internal`.delete("logs", ":id", use: deleteLogs)
+        `internal`.get("users", ":id", "logs", use: getRawLogs)
     }
 
     private func verifyCard(req: Request) async throws -> String {
@@ -60,12 +61,12 @@ struct AccessController: RouteCollection {
     }
 
     private func getInfo(req: Request) async throws -> EmployerModel {
-        let context = try AuthenticatedUserContext(headers: req.headers)
+        let context = try authenticatedContext(for: req)
         return try await directoryClient.employer(id: context.id)
     }
 
     private func getLogs(req: Request) async throws -> Logs {
-        let context = try AuthenticatedUserContext(headers: req.headers)
+        let context = try authenticatedContext(for: req)
         let request = try req.content.decode(GetLogsRequest.self)
         let targetID = request.id ?? context.id
 
@@ -78,13 +79,13 @@ struct AccessController: RouteCollection {
     }
 
     private func getStatistic(req: Request) async throws -> Statistic {
-        let context = try AuthenticatedUserContext(headers: req.headers)
+        let context = try authenticatedContext(for: req)
         let logs = try await logs(for: context.id, after: nil, on: req.db)
         return Statistic(averageTime: StatisticCalculator(enters: logs).averageTime)
     }
 
     private func getAll(req: Request) async throws -> Employers {
-        let context = try AuthenticatedUserContext(headers: req.headers)
+        let context = try authenticatedContext(for: req)
         guard context.isAdmin else {
             throw Abort(.forbidden, reason: "Admin token required")
         }
@@ -105,7 +106,7 @@ struct AccessController: RouteCollection {
     }
 
     private func openDoor(req: Request) async throws -> OpeningResult {
-        let context = try AuthenticatedUserContext(headers: req.headers)
+        let context = try authenticatedContext(for: req)
         await eventRecorder.publish("door.open.requested", payload: ["employerId": context.id.uuidString])
         let result = try await deviceClient.open()
         if result.isSuccess {
@@ -122,9 +123,26 @@ struct AccessController: RouteCollection {
             .delete()
         return ValidServerResponse(isValid: true)
     }
+
+    private func getRawLogs(req: Request) async throws -> Logs {
+        let context = try authenticatedContext(for: req)
+        let id = try req.parameters.require("id", as: UUID.self)
+        guard context.id == id || context.isAdmin else {
+            throw Abort(.forbidden, reason: "No access to requested logs")
+        }
+        return Logs(logs: try await logs(for: id, after: nil, on: req.db))
+    }
 }
 
 private extension AccessController {
+    func authenticatedContext(for req: Request) throws -> AuthenticatedUserContext {
+        do {
+            return try AuthenticatedUserContext(headers: req.headers)
+        } catch {
+            throw Abort(.unauthorized, reason: "Missing trusted user context")
+        }
+    }
+
     func addEnter(for employerID: UUID, on database: Database) async throws {
         let lastEnter = try await AccessEnter.query(on: database)
             .filter(\.$employerID == employerID)

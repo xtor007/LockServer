@@ -9,6 +9,7 @@ func configure(_ app: Application) async throws {
     try DatabaseBootstrapper.configure(app, databaseName: "lockService")
 
     app.migrations.add(CreateDirectoryEmployer())
+    app.migrations.add(AddDirectoryEmployerWorkNormMinutes())
     app.migrations.add(CreateDirectoryCard())
     app.migrations.add(CreateDirectoryFinger())
     try await app.autoMigrate()

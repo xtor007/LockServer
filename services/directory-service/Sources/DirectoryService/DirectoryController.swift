@@ -50,6 +50,7 @@ struct DirectoryController: RouteCollection {
             employer.department = request.employer.department
             employer.email = request.employer.email
             employer.isAdmin = request.employer.isAdmin
+            employer.workNormMinutes = request.employer.workNormMinutes ?? employer.workNormMinutes ?? SeedUsers.defaultWorkNormMinutes
             try await employer.update(on: req.db)
         } else {
             let employer = DirectoryEmployer(
@@ -58,7 +59,8 @@ struct DirectoryController: RouteCollection {
                 surname: request.employer.surname,
                 department: request.employer.department,
                 email: request.employer.email,
-                isAdmin: request.employer.isAdmin
+                isAdmin: request.employer.isAdmin,
+                workNormMinutes: request.employer.workNormMinutes ?? SeedUsers.defaultWorkNormMinutes
             )
             try await employer.create(on: req.db)
             await eventRecorder.publish("employee.created", payload: [
@@ -118,6 +120,7 @@ private extension DirectoryController {
             surname: employer.surname,
             department: employer.department,
             email: employer.email,
+            workNormMinutes: employer.workNormMinutes ?? SeedUsers.defaultWorkNormMinutes,
             hasCard: hasCard,
             hasFinger: hasFinger
         )

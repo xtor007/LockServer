@@ -52,6 +52,7 @@ public struct EmployerModel: Content, Equatable {
     public let surname: String?
     public let department: String?
     public let email: String?
+    public let workNormMinutes: Int?
     public var hasCard: Bool?
     public var hasFinger: Bool?
 
@@ -62,6 +63,7 @@ public struct EmployerModel: Content, Equatable {
         surname: String?,
         department: String?,
         email: String?,
+        workNormMinutes: Int?,
         hasCard: Bool?,
         hasFinger: Bool?
     ) {
@@ -71,6 +73,7 @@ public struct EmployerModel: Content, Equatable {
         self.surname = surname
         self.department = department
         self.email = email
+        self.workNormMinutes = workNormMinutes
         self.hasCard = hasCard
         self.hasFinger = hasFinger
     }

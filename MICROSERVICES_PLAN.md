@@ -13,6 +13,7 @@ Keep the existing external API stable while running the backend as explicit doma
 - `services/directory-service/`
 - `services/access-service/`
 - `services/device-service/`
+- `services/attendance-analysis-service/`
 - `infrastructure/local/`
 
 ## Service Responsibilities
@@ -23,6 +24,7 @@ Keep the existing external API stable while running the backend as explicit doma
 - preserves all routes from `ENDPOINTS.md`
 - proxies auth routes to `auth-service`
 - proxies user/access routes to `access-service`
+- proxies attendance-analysis manual routes to `attendance-analysis-service`
 - coordinates `command/add` and `command/delete` across multiple services
 
 ### `auth-service`
@@ -54,6 +56,15 @@ Keep the existing external API stable while running the backend as explicit doma
 - supports local mock mode without hardware
 - exposes an internal open endpoint used by `access-service`
 
+### `attendance-analysis-service`
+
+- owns first-stage attendance analytics storage
+- owns `attendance_day_observations`, `attendance_analysis_results`
+- reads employee work norms from `directory-service`
+- reads raw access events from `access-service`
+- serves attendance-analysis logic behind the gateway
+- exposes manual admin hooks for per-user and all-users-per-day observation build/rebuild
+
 ## Synchronous Calls
 
 The implemented synchronous paths are:
@@ -63,6 +74,14 @@ The implemented synchronous paths are:
 - `api-gateway -> access-service`
 - `access-service -> directory-service`
 - `access-service -> device-service`
+- `attendance-analysis-service -> directory-service`
+- `attendance-analysis-service -> access-service`
+
+## Routing Rule
+
+- all documented and manually verified HTTP endpoints must be called through `api-gateway` on port `8080`
+- direct service ports are internal infrastructure details, not the canonical API surface
+- direct service ports may still be used for service-to-service traffic, health checks, and low-level debugging
 
 ## Event Contracts
 
@@ -82,6 +101,7 @@ Current emitted names:
 - `device.offline`
 
 These events are intentionally versioned from the start so future analytics consumers can subscribe without reading operational tables directly.
+The current first-stage attendance bootstrap still uses synchronous internal reads from `directory-service` and `access-service` for deterministic local verification.
 
 ## Data Ownership Rule
 

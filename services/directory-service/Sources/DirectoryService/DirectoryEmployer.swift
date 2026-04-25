@@ -22,6 +22,9 @@ final class DirectoryEmployer: Model, Content {
     @Field(key: "is_admin")
     var isAdmin: Bool
 
+    @OptionalField(key: "work_norm_minutes")
+    var workNormMinutes: Int?
+
     @Children(for: \.$employer)
     var cards: [DirectoryCard]
 
@@ -30,12 +33,13 @@ final class DirectoryEmployer: Model, Content {
 
     init() { }
 
-    init(id: UUID, name: String?, surname: String?, department: String?, email: String?, isAdmin: Bool) {
+    init(id: UUID, name: String?, surname: String?, department: String?, email: String?, isAdmin: Bool, workNormMinutes: Int?) {
         self.id = id
         self.name = name
         self.surname = surname
         self.department = department
         self.email = email
         self.isAdmin = isAdmin
+        self.workNormMinutes = workNormMinutes
     }
 }

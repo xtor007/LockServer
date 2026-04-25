@@ -7,11 +7,13 @@ struct GatewayController: RouteCollection {
     private let authBaseURL: String
     private let directoryBaseURL: String
     private let accessBaseURL: String
+    private let attendanceAnalysisBaseURL: String
 
-    init(authBaseURL: String, directoryBaseURL: String, accessBaseURL: String) {
+    init(authBaseURL: String, directoryBaseURL: String, accessBaseURL: String, attendanceAnalysisBaseURL: String) {
         self.authBaseURL = authBaseURL
         self.directoryBaseURL = directoryBaseURL
         self.accessBaseURL = accessBaseURL
+        self.attendanceAnalysisBaseURL = attendanceAnalysisBaseURL
     }
 
     func boot(routes: RoutesBuilder) throws {
@@ -40,6 +42,15 @@ struct GatewayController: RouteCollection {
         let command = routes.grouped("command")
         command.post("add", use: addUser)
         command.get("delete", use: deleteUser)
+
+        let attendanceAnalysis = routes.grouped("internal", "attendance-analysis")
+        attendanceAnalysis.post("observations", "run", use: runAttendanceObservation)
+        attendanceAnalysis.post("observations", "rebuild", use: rebuildAttendanceObservation)
+        attendanceAnalysis.post("observations", "run-all", use: runAttendanceObservationsForAllUsers)
+        attendanceAnalysis.post("observations", "rebuild-all", use: rebuildAttendanceObservationsForAllUsers)
+        attendanceAnalysis.get("users", ":id", "observations", use: getAttendanceObservations)
+        attendanceAnalysis.get("users", ":id", "observations", ":day", use: getAttendanceObservation)
+        attendanceAnalysis.get("users", ":id", "results", use: getAttendanceResults)
     }
 
     private func root(req: Request) -> String {
@@ -144,6 +155,7 @@ struct GatewayController: RouteCollection {
             surname: incomingEmployer.surname,
             department: incomingEmployer.department,
             email: email,
+            workNormMinutes: incomingEmployer.workNormMinutes ?? SeedUsers.defaultWorkNormMinutes,
             hasCard: incomingEmployer.hasCard,
             hasFinger: incomingEmployer.hasFinger
         )
@@ -203,6 +215,38 @@ struct GatewayController: RouteCollection {
 
         return ValidServerResponse(isValid: true)
     }
+
+    private func runAttendanceObservation(req: Request) async throws -> Response {
+        try await forwardAttendanceRequest(req, path: "/internal/attendance-analysis/observations/run")
+    }
+
+    private func rebuildAttendanceObservation(req: Request) async throws -> Response {
+        try await forwardAttendanceRequest(req, path: "/internal/attendance-analysis/observations/rebuild")
+    }
+
+    private func runAttendanceObservationsForAllUsers(req: Request) async throws -> Response {
+        try await forwardAttendanceRequest(req, path: "/internal/attendance-analysis/observations/run-all")
+    }
+
+    private func rebuildAttendanceObservationsForAllUsers(req: Request) async throws -> Response {
+        try await forwardAttendanceRequest(req, path: "/internal/attendance-analysis/observations/rebuild-all")
+    }
+
+    private func getAttendanceObservations(req: Request) async throws -> Response {
+        let id = try req.parameters.require("id")
+        return try await forwardAttendanceRequest(req, path: "/internal/attendance-analysis/users/\(id)/observations")
+    }
+
+    private func getAttendanceObservation(req: Request) async throws -> Response {
+        let id = try req.parameters.require("id")
+        let day = try req.parameters.require("day")
+        return try await forwardAttendanceRequest(req, path: "/internal/attendance-analysis/users/\(id)/observations/\(day)")
+    }
+
+    private func getAttendanceResults(req: Request) async throws -> Response {
+        let id = try req.parameters.require("id")
+        return try await forwardAttendanceRequest(req, path: "/internal/attendance-analysis/users/\(id)/results")
+    }
 }
 
 private extension GatewayController {
@@ -218,7 +262,15 @@ private extension GatewayController {
     }
 
     func forwardAuthRequest(_ req: Request, path: String) async throws -> Response {
-        let response = try await req.client.send(req.method, headers: req.headers, to: URI(string: authBaseURL + path)) { request in
+        try await forwardRequest(req, baseURL: authBaseURL, path: path)
+    }
+
+    func forwardAttendanceRequest(_ req: Request, path: String) async throws -> Response {
+        try await forwardRequest(req, baseURL: attendanceAnalysisBaseURL, path: path)
+    }
+
+    func forwardRequest(_ req: Request, baseURL: String, path: String) async throws -> Response {
+        let response = try await req.client.send(req.method, headers: req.headers, to: URI(string: baseURL + path)) { request in
             request.body = req.body.data
         }
         return try makeResponse(from: response, for: req)

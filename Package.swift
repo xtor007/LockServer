@@ -92,11 +92,24 @@ let package = Package(
             path: "services/device-service/Sources/DeviceService",
             swiftSettings: swiftSettings
         ),
+        .executableTarget(
+            name: "AttendanceAnalysisService",
+            dependencies: [
+                .target(name: "LockServerContracts"),
+                .target(name: "LockServerCore"),
+                .product(name: "Vapor", package: "vapor"),
+                .product(name: "Fluent", package: "fluent"),
+                .product(name: "FluentMySQLDriver", package: "fluent-mysql-driver")
+            ],
+            path: "services/attendance-analysis-service/Sources/AttendanceAnalysisService",
+            swiftSettings: swiftSettings
+        ),
         .testTarget(
             name: "LockServerTests",
             dependencies: [
                 .target(name: "App"),
                 .target(name: "AccessService"),
+                .target(name: "AttendanceAnalysisService"),
                 .target(name: "DeviceService"),
                 .target(name: "LockServerCore"),
                 .target(name: "LockServerContracts"),

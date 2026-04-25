@@ -22,6 +22,15 @@ AUTH_URL="http://127.0.0.1:${LOCKSERVER_AUTH_PORT}"
 DIRECTORY_URL="http://127.0.0.1:${LOCKSERVER_DIRECTORY_PORT}"
 ACCESS_URL="http://127.0.0.1:${LOCKSERVER_ACCESS_PORT}"
 DEVICE_URL="http://127.0.0.1:${LOCKSERVER_DEVICE_PORT}"
+ATTENDANCE_URL="http://127.0.0.1:${LOCKSERVER_ATTENDANCE_ANALYSIS_PORT}"
+ATTENDANCE_GATEWAY_URL="$GATEWAY_URL/internal/attendance-analysis"
+
+ATTENDANCE_NORMAL_ID="33333333-3333-3333-3333-333333333333"
+ATTENDANCE_SPLIT_ID="44444444-4444-4444-4444-444444444444"
+ATTENDANCE_SHORT_ID="55555555-5555-5555-5555-555555555555"
+ATTENDANCE_BROKEN_ID="66666666-6666-6666-6666-666666666666"
+ATTENDANCE_NIGHT_ID="77777777-7777-7777-7777-777777777777"
+ATTENDANCE_BATCH_DAY="2026-04-24"
 
 assert_true_json() {
   local response="$1"
@@ -34,6 +43,7 @@ assert_true_json "$(curl -sS "$AUTH_URL/validate")"
 assert_true_json "$(curl -sS "$DIRECTORY_URL/validate")"
 assert_true_json "$(curl -sS "$ACCESS_URL/validate")"
 assert_true_json "$(curl -sS "$DEVICE_URL/validate")"
+assert_true_json "$(curl -sS "$ATTENDANCE_URL/validate")"
 
 echo "Requesting user token..."
 USER_TOKEN_RESPONSE="$(curl -sS -u user@lock.local:user1234 "$GATEWAY_URL/auth/getToken")"
@@ -49,7 +59,7 @@ RESET_CODE="$(curl -sS -X POST -H "Content-Type: application/json" -d '{"email":
 assert_true_json "$(curl -sS -u user@lock.local:$RESET_CODE -X POST -H "Content-Type: application/json" -d '{"password":"user1234"}' "$GATEWAY_URL/auth/changePassword")"
 
 echo "Loading user-facing endpoints..."
-curl -sS -H "Authorization: Bearer $USER_AUTH" "$GATEWAY_URL/info/" | jq -e '.email == "user@lock.local"' >/dev/null
+curl -sS -H "Authorization: Bearer $USER_AUTH" "$GATEWAY_URL/info/" | jq -e '.email == "user@lock.local" and .workNormMinutes == 480' >/dev/null
 curl -sS -H "Authorization: Bearer $USER_AUTH" -X POST -H "Content-Type: application/json" -d '{"valid":true,"id":null,"afterDate":null}' "$GATEWAY_URL/info/logs" | jq -e '.logs | length >= 1' >/dev/null
 curl -sS -H "Authorization: Bearer $USER_AUTH" "$GATEWAY_URL/info/statistic" | jq -e '.averageTime >= 0' >/dev/null
 curl -sS -H "Authorization: Bearer $USER_AUTH" "$GATEWAY_URL/open/open" | jq -e '.isSuccess == true' >/dev/null
@@ -60,10 +70,12 @@ echo "Checking verifier routes..."
 
 echo "Loading admin endpoints..."
 ADMIN_TOKEN="$(curl -sS -u admin@lock.local:admin1234 "$GATEWAY_URL/auth/getToken" | jq -r '.auth')"
+ATTENDANCE_NORMAL_TOKEN="$(curl -sS -u attendance.normal@lock.local:normal1234 "$GATEWAY_URL/auth/getToken" | jq -r '.auth')"
 curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$GATEWAY_URL/info/all" | jq -e '.employers | length >= 2' >/dev/null
+curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$GATEWAY_URL/info/all" | jq -e '.employers[] | select(.employer.id == "33333333-3333-3333-3333-333333333333") | .employer.workNormMinutes == 480' >/dev/null
 
 TEMP_EMAIL="new.user.$(date +%s)@lock.local"
-assert_true_json "$(curl -sS -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d "{\"id\":null,\"isAdmin\":false,\"name\":\"New\",\"surname\":\"User\",\"department\":\"Ops\",\"email\":\"$TEMP_EMAIL\",\"hasCard\":null,\"hasFinger\":null}" "$GATEWAY_URL/command/add")"
+assert_true_json "$(curl -sS -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d "{\"id\":null,\"isAdmin\":false,\"name\":\"New\",\"surname\":\"User\",\"department\":\"Ops\",\"email\":\"$TEMP_EMAIL\",\"workNormMinutes\":480,\"hasCard\":null,\"hasFinger\":null}" "$GATEWAY_URL/command/add")"
 
 TEMP_ID="$(curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$GATEWAY_URL/info/all" | jq -r --arg email "$TEMP_EMAIL" '.employers[] | select(.employer.email == $email) | .employer.id')"
 if [[ -z "$TEMP_ID" || "$TEMP_ID" == "null" ]]; then
@@ -71,6 +83,69 @@ if [[ -z "$TEMP_ID" || "$TEMP_ID" == "null" ]]; then
   exit 1
 fi
 
+curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$GATEWAY_URL/info/all" | jq -e --arg email "$TEMP_EMAIL" '.employers[] | select(.employer.email == $email) | .employer.workNormMinutes == 480' >/dev/null
 assert_true_json "$(curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$GATEWAY_URL/command/delete?id=$TEMP_ID")"
 
-echo "All endpoint checks passed through the gateway."
+echo "Checking attendance analysis bootstrap data..."
+curl -sS "$DIRECTORY_URL/internal/directory/employers/$ATTENDANCE_NORMAL_ID" | jq -e '.workNormMinutes == 480' >/dev/null
+curl -sS "$DIRECTORY_URL/internal/directory/employers/$ATTENDANCE_SPLIT_ID" | jq -e '.workNormMinutes == 480' >/dev/null
+curl -sS "$DIRECTORY_URL/internal/directory/employers/$ATTENDANCE_SHORT_ID" | jq -e '.workNormMinutes == 480' >/dev/null
+curl -sS "$DIRECTORY_URL/internal/directory/employers/$ATTENDANCE_BROKEN_ID" | jq -e '.workNormMinutes == 480' >/dev/null
+curl -sS "$DIRECTORY_URL/internal/directory/employers/$ATTENDANCE_NIGHT_ID" | jq -e '.workNormMinutes == 480' >/dev/null
+
+curl -sS -H "X-Lock-User-Id: $ATTENDANCE_NORMAL_ID" -H "X-Lock-User-Email: attendance.normal@lock.local" -H "X-Lock-User-Is-Admin: false" "$ACCESS_URL/internal/access/users/$ATTENDANCE_NORMAL_ID/logs" | jq -e '.logs | length == 2' >/dev/null
+curl -sS -H "X-Lock-User-Id: 11111111-1111-1111-1111-111111111111" -H "X-Lock-User-Email: admin@lock.local" -H "X-Lock-User-Is-Admin: true" "$ACCESS_URL/internal/access/users/$ATTENDANCE_SPLIT_ID/logs" | jq -e '.logs | length == 4' >/dev/null
+curl -sS -H "X-Lock-User-Id: 11111111-1111-1111-1111-111111111111" -H "X-Lock-User-Email: admin@lock.local" -H "X-Lock-User-Is-Admin: true" "$ACCESS_URL/internal/access/users/$ATTENDANCE_SHORT_ID/logs" | jq -e '.logs | length == 2' >/dev/null
+curl -sS -H "X-Lock-User-Id: 11111111-1111-1111-1111-111111111111" -H "X-Lock-User-Email: admin@lock.local" -H "X-Lock-User-Is-Admin: true" "$ACCESS_URL/internal/access/users/$ATTENDANCE_BROKEN_ID/logs" | jq -e '.logs | length == 1' >/dev/null
+curl -sS -H "X-Lock-User-Id: 11111111-1111-1111-1111-111111111111" -H "X-Lock-User-Email: admin@lock.local" -H "X-Lock-User-Is-Admin: true" "$ACCESS_URL/internal/access/users/$ATTENDANCE_NIGHT_ID/logs" | jq -e '.logs | length == 2' >/dev/null
+[[ "$(curl -sS -o /dev/null -w "%{http_code}" "$ACCESS_URL/internal/access/users/$ATTENDANCE_NORMAL_ID/logs")" == "401" ]]
+[[ "$(curl -sS -o /dev/null -w "%{http_code}" -H "X-Lock-User-Id: $ATTENDANCE_NORMAL_ID" -H "X-Lock-User-Email: attendance.normal@lock.local" -H "X-Lock-User-Is-Admin: false" "$ACCESS_URL/internal/access/users/$ATTENDANCE_SPLIT_ID/logs")" == "403" ]]
+
+run_attendance_case() {
+  local user_id="$1"
+  local day="$2"
+  local expected_status="$3"
+  local expected_worked="$4"
+  local expected_break="$5"
+  local expected_sessions="$6"
+  local expected_anomaly="$7"
+  local expected_reason="$8"
+
+  curl -sS -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d "{\"userId\":\"$user_id\",\"day\":\"$day\"}" "$ATTENDANCE_GATEWAY_URL/observations/rebuild" | jq -e --arg status "$expected_status" '.status == $status' >/dev/null
+
+  curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$user_id/observations/$day" | jq -e \
+    --argjson worked "$expected_worked" \
+    --argjson breakMinutes "$expected_break" \
+    --argjson sessions "$expected_sessions" \
+    --argjson anomaly "$expected_anomaly" \
+    '.workedMinutes == $worked and .breakMinutes == $breakMinutes and .sessionsCount == $sessions and .isTechnicalAnomaly == $anomaly' >/dev/null
+
+  if [[ -n "$expected_reason" ]]; then
+    curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$user_id/observations/$day" | jq -e --arg reason "$expected_reason" '.anomalyReason == $reason' >/dev/null
+  else
+    curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$user_id/observations/$day" | jq -e '.anomalyReason == null' >/dev/null
+  fi
+
+  curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$user_id/results" | jq -e \
+    --arg day "$day" \
+    --arg status "$expected_status" \
+    '.results | map(select(.day == $day and .status == $status)) | length == 1' >/dev/null
+}
+
+run_attendance_case "$ATTENDANCE_NORMAL_ID" "2026-04-21" "observation_built" 510 0 1 false ""
+run_attendance_case "$ATTENDANCE_SPLIT_ID" "2026-04-21" "observation_built" 495 60 2 false ""
+run_attendance_case "$ATTENDANCE_SHORT_ID" "2026-04-22" "observation_built" 330 0 1 false ""
+run_attendance_case "$ATTENDANCE_BROKEN_ID" "2026-04-23" "technical_anomaly" 0 0 1 true "missing_exit"
+run_attendance_case "$ATTENDANCE_NIGHT_ID" "2026-04-24" "observation_built" 225 0 1 false ""
+
+curl -sS -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d "{\"day\":\"$ATTENDANCE_BATCH_DAY\"}" "$ATTENDANCE_GATEWAY_URL/observations/rebuild-all" | jq -e \
+  --arg batchDay "$ATTENDANCE_BATCH_DAY" \
+  '.day == $batchDay and .processedCount >= 7 and (.items | map(select(.result.userId == "22222222-2222-2222-2222-222222222222" and .status == "observation_built")) | length == 1)' >/dev/null
+
+curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/22222222-2222-2222-2222-222222222222/observations/$ATTENDANCE_BATCH_DAY" | jq -e '.workedMinutes == 240 and .sessionsCount == 1 and .isTechnicalAnomaly == false' >/dev/null
+curl -sS -H "Authorization: Bearer $ATTENDANCE_NORMAL_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$ATTENDANCE_NORMAL_ID/observations/2026-04-21" | jq -e '.workedMinutes == 510' >/dev/null
+[[ "$(curl -sS -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $ATTENDANCE_NORMAL_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$ATTENDANCE_SPLIT_ID/observations/2026-04-21")" == "403" ]]
+[[ "$(curl -sS -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Bearer $ATTENDANCE_NORMAL_TOKEN" -H "Content-Type: application/json" -d "{\"userId\":\"$ATTENDANCE_NORMAL_ID\",\"day\":\"2026-04-21\"}" "$ATTENDANCE_GATEWAY_URL/observations/rebuild")" == "403" ]]
+[[ "$(curl -sS -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Bearer $ATTENDANCE_NORMAL_TOKEN" -H "Content-Type: application/json" -d "{\"day\":\"$ATTENDANCE_BATCH_DAY\"}" "$ATTENDANCE_GATEWAY_URL/observations/rebuild-all")" == "403" ]]
+
+echo "All endpoint checks passed through the gateway and attendance-analysis service."
