@@ -19,6 +19,30 @@ final class AttendanceAnalysisResult: Model, Content {
     @OptionalField(key: "observation_id")
     var observationId: UUID?
 
+    @OptionalField(key: "history_days_used")
+    var historyDaysUsed: Int?
+
+    @OptionalField(key: "average_start_minutes")
+    var averageStartMinutes: Double?
+
+    @OptionalField(key: "stddev_start_minutes")
+    var stddevStartMinutes: Double?
+
+    @OptionalField(key: "stddev_worked_minutes")
+    var stddevWorkedMinutes: Double?
+
+    @OptionalField(key: "work_norm_minutes")
+    var workNormMinutes: Int?
+
+    @OptionalField(key: "z_s")
+    var zS: Double?
+
+    @OptionalField(key: "z_t")
+    var zT: Double?
+
+    @OptionalField(key: "f")
+    var f: Double?
+
     @Field(key: "details_json")
     var detailsJson: String
 
@@ -30,12 +54,35 @@ final class AttendanceAnalysisResult: Model, Content {
 
     init() { }
 
-    init(id: UUID? = nil, userId: UUID, day: Date, status: String, observationId: UUID?, detailsJson: String) {
+    init(
+        id: UUID? = nil,
+        userId: UUID,
+        day: Date,
+        status: String,
+        observationId: UUID?,
+        historyDaysUsed: Int?,
+        averageStartMinutes: Double?,
+        stddevStartMinutes: Double?,
+        stddevWorkedMinutes: Double?,
+        workNormMinutes: Int?,
+        zS: Double?,
+        zT: Double?,
+        f: Double?,
+        detailsJson: String
+    ) {
         self.id = id ?? UUID()
         self.userId = userId
         self.day = day
         self.status = status
         self.observationId = observationId
+        self.historyDaysUsed = historyDaysUsed
+        self.averageStartMinutes = averageStartMinutes
+        self.stddevStartMinutes = stddevStartMinutes
+        self.stddevWorkedMinutes = stddevWorkedMinutes
+        self.workNormMinutes = workNormMinutes
+        self.zS = zS
+        self.zT = zT
+        self.f = f
         self.detailsJson = detailsJson
     }
 }

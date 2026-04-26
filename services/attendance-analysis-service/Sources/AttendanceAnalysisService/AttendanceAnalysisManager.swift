@@ -8,12 +8,16 @@ struct AttendanceAnalysisManager {
     private let directoryClient: AttendanceDirectoryServiceClient
     private let accessClient: AttendanceAccessServiceClient
     private let builder = AttendanceObservationBuilder()
+    private let signalCalculator: AttendanceCoreSignalCalculator
+    private let baselineWindowDays: Int
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
-    init(directoryClient: AttendanceDirectoryServiceClient, accessClient: AttendanceAccessServiceClient) {
+    init(directoryClient: AttendanceDirectoryServiceClient, accessClient: AttendanceAccessServiceClient, baselineWindowDays: Int) {
         self.directoryClient = directoryClient
         self.accessClient = accessClient
+        self.baselineWindowDays = max(baselineWindowDays, 1)
+        self.signalCalculator = AttendanceCoreSignalCalculator(baselineWindowDays: self.baselineWindowDays)
 
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -133,17 +137,18 @@ private extension AttendanceAnalysisManager {
         let outcome = AttendanceObservationBuildOutcome(status: initialOutcome.status, observation: observationDraft, details: initialOutcome.details)
 
         let observation = try await upsertObservation(outcome.observation, userId: userId, day: day, on: database)
-        let result = try await upsertResult(
+        let resultDraft = try await makeResultDraft(
+            outcome: outcome,
+            observation: observation,
             userId: userId,
             day: day,
-            status: outcome.status.rawValue,
-            observationId: observation?.id,
-            details: outcome.details,
+            workNormMinutes: workNormMinutes,
             on: database
         )
+        let result = try await upsertResult(userId: userId, day: day, draft: resultDraft, on: database)
 
         return AttendanceObservationRunResponse(
-            status: outcome.status.rawValue,
+            status: resultDraft.status.rawValue,
             observation: observation.map(makeObservationResponse),
             result: try makeResultResponse(from: result),
             wasRebuilt: rebuild
@@ -171,6 +176,7 @@ extension AttendanceAnalysisManager {
     func results(userId: UUID, on database: Database) async throws -> [AttendanceAnalysisResultResponse] {
         let results = try await AttendanceAnalysisResult.query(on: database)
             .filter(\.$userId == userId)
+            .filter(\.$status == AttendanceAnalysisStatus.signalsReady.rawValue)
             .sort(\.$day, .ascending)
             .all()
         return try results.map(makeResultResponse)
@@ -247,16 +253,22 @@ private extension AttendanceAnalysisManager {
     func upsertResult(
         userId: UUID,
         day: AttendanceDay,
-        status: String,
-        observationId: UUID?,
-        details: AttendanceAnalysisDebugDetails,
+        draft: AttendanceAnalysisResultDraft,
         on database: Database
     ) async throws -> AttendanceAnalysisResult {
-        let detailsJson = try encode(details)
+        let detailsJson = try encode(draft.details)
 
         if let existing = try await findResult(userId: userId, day: day, on: database) {
-            existing.status = status
-            existing.observationId = observationId
+            existing.status = draft.status.rawValue
+            existing.observationId = draft.observationId
+            existing.historyDaysUsed = draft.historyDaysUsed
+            existing.averageStartMinutes = draft.averageStartMinutes
+            existing.stddevStartMinutes = draft.stddevStartMinutes
+            existing.stddevWorkedMinutes = draft.stddevWorkedMinutes
+            existing.workNormMinutes = draft.workNormMinutes
+            existing.zS = draft.zS
+            existing.zT = draft.zT
+            existing.f = draft.f
             existing.detailsJson = detailsJson
             try await existing.update(on: database)
             return existing
@@ -265,8 +277,16 @@ private extension AttendanceAnalysisManager {
         let result = AttendanceAnalysisResult(
             userId: userId,
             day: day.startOfDay,
-            status: status,
-            observationId: observationId,
+            status: draft.status.rawValue,
+            observationId: draft.observationId,
+            historyDaysUsed: draft.historyDaysUsed,
+            averageStartMinutes: draft.averageStartMinutes,
+            stddevStartMinutes: draft.stddevStartMinutes,
+            stddevWorkedMinutes: draft.stddevWorkedMinutes,
+            workNormMinutes: draft.workNormMinutes,
+            zS: draft.zS,
+            zT: draft.zT,
+            f: draft.f,
             detailsJson: detailsJson
         )
         try await result.create(on: database)
@@ -303,15 +323,216 @@ private extension AttendanceAnalysisManager {
     }
 
     func makeResultResponse(from result: AttendanceAnalysisResult) throws -> AttendanceAnalysisResultResponse {
-        AttendanceAnalysisResultResponse(
+        let details = try decode(result.detailsJson)
+        return AttendanceAnalysisResultResponse(
             id: result.id,
             userId: result.userId,
             day: AttendanceDay(date: result.day).stringValue,
             status: result.status,
             observationId: result.observationId,
-            detailsJson: try decode(result.detailsJson),
+            historyDaysUsed: result.historyDaysUsed ?? details.historyDaysUsed ?? 0,
+            averageStartMinutes: result.averageStartMinutes ?? details.averageStartMinutes,
+            stddevStartMinutes: result.stddevStartMinutes ?? details.stddevStartMinutes,
+            stddevWorkedMinutes: result.stddevWorkedMinutes ?? details.stddevWorkedMinutes,
+            workNormMinutes: result.workNormMinutes ?? details.workNormMinutes,
+            zS: result.zS ?? details.zS,
+            zT: result.zT ?? details.zT,
+            f: result.f ?? details.f,
+            detailsJson: details,
             createdAt: result.createdAt,
             updatedAt: result.updatedAt
+        )
+    }
+}
+
+private extension AttendanceAnalysisManager {
+    func makeResultDraft(
+        outcome: AttendanceObservationBuildOutcome,
+        observation: AttendanceDayObservation?,
+        userId: UUID,
+        day: AttendanceDay,
+        workNormMinutes: Int,
+        on database: Database
+    ) async throws -> AttendanceAnalysisResultDraft {
+        switch outcome.status {
+        case .notReady:
+            return AttendanceAnalysisResultDraft(
+                status: .notReady,
+                observationId: nil,
+                historyDaysUsed: 0,
+                averageStartMinutes: nil,
+                stddevStartMinutes: nil,
+                stddevWorkedMinutes: nil,
+                workNormMinutes: workNormMinutes,
+                zS: nil,
+                zT: nil,
+                f: nil,
+                details: makeDebugDetails(
+                    from: outcome.details,
+                    snapshot: AttendanceCoreSignalCalculator.Snapshot(
+                        historyDaysUsed: 0,
+                        averageStartMinutes: nil,
+                        stddevStartMinutes: nil,
+                        stddevWorkedMinutes: nil,
+                        workNormMinutes: workNormMinutes,
+                        zS: nil,
+                        zT: nil,
+                        f: nil
+                    ),
+                    debug: AttendanceCoreSignalCalculator.Debug(
+                        baselineWindowDays: baselineWindowDays,
+                        historyDays: [],
+                        deficitHistoryDaysCount: 0,
+                        calculationNotes: []
+                    )
+                )
+            )
+
+        case .technicalAnomaly:
+            return AttendanceAnalysisResultDraft(
+                status: .technicalAnomaly,
+                observationId: observation?.id,
+                historyDaysUsed: 0,
+                averageStartMinutes: nil,
+                stddevStartMinutes: nil,
+                stddevWorkedMinutes: nil,
+                workNormMinutes: workNormMinutes,
+                zS: nil,
+                zT: nil,
+                f: nil,
+                details: makeDebugDetails(
+                    from: outcome.details,
+                    snapshot: AttendanceCoreSignalCalculator.Snapshot(
+                        historyDaysUsed: 0,
+                        averageStartMinutes: nil,
+                        stddevStartMinutes: nil,
+                        stddevWorkedMinutes: nil,
+                        workNormMinutes: workNormMinutes,
+                        zS: nil,
+                        zT: nil,
+                        f: nil
+                    ),
+                    debug: AttendanceCoreSignalCalculator.Debug(
+                        baselineWindowDays: baselineWindowDays,
+                        historyDays: [],
+                        deficitHistoryDaysCount: 0,
+                        calculationNotes: ["target_day_technical_anomaly"]
+                    )
+                )
+            )
+
+        case .observationBuilt, .signalsReady, .insufficientHistory:
+            guard let observation, let firstEntryTime = observation.firstEntryTime else {
+                return AttendanceAnalysisResultDraft(
+                    status: .notReady,
+                    observationId: observation?.id,
+                    historyDaysUsed: 0,
+                    averageStartMinutes: nil,
+                    stddevStartMinutes: nil,
+                    stddevWorkedMinutes: nil,
+                    workNormMinutes: workNormMinutes,
+                    zS: nil,
+                    zT: nil,
+                    f: nil,
+                    details: makeDebugDetails(
+                        from: outcome.details,
+                        snapshot: AttendanceCoreSignalCalculator.Snapshot(
+                            historyDaysUsed: 0,
+                            averageStartMinutes: nil,
+                            stddevStartMinutes: nil,
+                            stddevWorkedMinutes: nil,
+                            workNormMinutes: workNormMinutes,
+                            zS: nil,
+                            zT: nil,
+                            f: nil
+                        ),
+                        debug: AttendanceCoreSignalCalculator.Debug(
+                            baselineWindowDays: baselineWindowDays,
+                            historyDays: [],
+                            deficitHistoryDaysCount: 0,
+                            calculationNotes: ["missing_first_entry_time_for_signal_stage"]
+                        )
+                    )
+                )
+            }
+
+            let history = try await previousValidObservations(userId: userId, before: day, on: database)
+            let calculation = signalCalculator.calculate(
+                target: AttendanceCoreSignalCalculator.ObservationInput(
+                    day: day,
+                    firstEntryTime: firstEntryTime,
+                    workedMinutes: observation.workedMinutes
+                ),
+                history: history,
+                workNormMinutes: workNormMinutes
+            )
+
+            return AttendanceAnalysisResultDraft(
+                status: calculation.status,
+                observationId: observation.id,
+                historyDaysUsed: calculation.snapshot.historyDaysUsed,
+                averageStartMinutes: calculation.snapshot.averageStartMinutes,
+                stddevStartMinutes: calculation.snapshot.stddevStartMinutes,
+                stddevWorkedMinutes: calculation.snapshot.stddevWorkedMinutes,
+                workNormMinutes: calculation.snapshot.workNormMinutes,
+                zS: calculation.snapshot.zS,
+                zT: calculation.snapshot.zT,
+                f: calculation.snapshot.f,
+                details: makeDebugDetails(from: outcome.details, snapshot: calculation.snapshot, debug: calculation.debug)
+            )
+        }
+    }
+
+    func previousValidObservations(
+        userId: UUID,
+        before day: AttendanceDay,
+        on database: Database
+    ) async throws -> [AttendanceCoreSignalCalculator.ObservationInput] {
+        let observations = try await AttendanceDayObservation.query(on: database)
+            .filter(\.$userId == userId)
+            .filter(\.$day < day.startOfDay)
+            .filter(\.$isTechnicalAnomaly == false)
+            .sort(\.$day, .descending)
+            .all()
+
+        return observations.compactMap { observation in
+            guard let firstEntryTime = observation.firstEntryTime else {
+                return nil
+            }
+
+            return AttendanceCoreSignalCalculator.ObservationInput(
+                day: AttendanceDay(date: observation.day),
+                firstEntryTime: firstEntryTime,
+                workedMinutes: observation.workedMinutes
+            )
+        }
+    }
+
+    func makeDebugDetails(
+        from source: AttendanceAnalysisDebugDetails,
+        snapshot: AttendanceCoreSignalCalculator.Snapshot,
+        debug: AttendanceCoreSignalCalculator.Debug
+    ) -> AttendanceAnalysisDebugDetails {
+        AttendanceAnalysisDebugDetails(
+            workNormMinutes: snapshot.workNormMinutes,
+            rawEventCount: source.rawEventCount,
+            rawEvents: source.rawEvents,
+            sessionStartsCount: source.sessionStartsCount,
+            completedSessionsCount: source.completedSessionsCount,
+            sessionRanges: source.sessionRanges,
+            anomalyReasons: source.anomalyReasons,
+            note: source.note,
+            baselineWindowDays: debug.baselineWindowDays,
+            historyDaysUsed: snapshot.historyDaysUsed,
+            baselineHistoryDays: debug.historyDays,
+            deficitHistoryDaysCount: debug.deficitHistoryDaysCount,
+            averageStartMinutes: snapshot.averageStartMinutes,
+            stddevStartMinutes: snapshot.stddevStartMinutes,
+            stddevWorkedMinutes: snapshot.stddevWorkedMinutes,
+            zS: snapshot.zS,
+            zT: snapshot.zT,
+            f: snapshot.f,
+            calculationNotes: debug.calculationNotes.isEmpty ? nil : debug.calculationNotes
         )
     }
 }

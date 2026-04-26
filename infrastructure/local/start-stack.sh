@@ -28,7 +28,8 @@ rm -f "$OWN_MYSQL_MARKER"
 
 if /usr/local/mysql/bin/mysqladmin ping -h "$LOCKSERVER_DB_HOST" -P "$LOCKSERVER_DB_PORT" -uroot -p"$LOCKSERVER_DB_PASSWORD" >/dev/null 2>&1; then
   /usr/local/mysql/bin/mysql -h "$LOCKSERVER_DB_HOST" -P "$LOCKSERVER_DB_PORT" -uroot -p"$LOCKSERVER_DB_PASSWORD" -e "
-  CREATE DATABASE IF NOT EXISTS lockService CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+  DROP DATABASE IF EXISTS lockService;
+  CREATE DATABASE lockService CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
   FLUSH PRIVILEGES;"
 else
   rm -rf "$MYSQL_DATA_DIR" "$MYSQL_RUN_DIR"
@@ -95,6 +96,7 @@ wait_for_url "http://127.0.0.1:${LOCKSERVER_ACCESS_PORT}/validate"
 wait_for_url "http://127.0.0.1:${LOCKSERVER_DEVICE_PORT}/validate"
 wait_for_url "http://127.0.0.1:${LOCKSERVER_ATTENDANCE_ANALYSIS_PORT}/validate"
 wait_for_url "http://127.0.0.1:${LOCKSERVER_GATEWAY_PORT}/validate"
+"$ROOT_DIR/infrastructure/local/materialize-attendance-analysis-fixture.sh" "$ENV_FILE"
 
 echo "LockServer microservices are running."
 echo "Gateway: http://127.0.0.1:${LOCKSERVER_GATEWAY_PORT}"

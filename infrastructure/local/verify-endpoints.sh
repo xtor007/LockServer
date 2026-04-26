@@ -30,7 +30,8 @@ ATTENDANCE_SPLIT_ID="44444444-4444-4444-4444-444444444444"
 ATTENDANCE_SHORT_ID="55555555-5555-5555-5555-555555555555"
 ATTENDANCE_BROKEN_ID="66666666-6666-6666-6666-666666666666"
 ATTENDANCE_NIGHT_ID="77777777-7777-7777-7777-777777777777"
-ATTENDANCE_BATCH_DAY="2026-04-24"
+ATTENDANCE_BATCH_DAY="2026-04-22"
+ATTENDANCE_RESULTS_COUNT=10
 
 assert_true_json() {
   local response="$1"
@@ -93,13 +94,17 @@ curl -sS "$DIRECTORY_URL/internal/directory/employers/$ATTENDANCE_SHORT_ID" | jq
 curl -sS "$DIRECTORY_URL/internal/directory/employers/$ATTENDANCE_BROKEN_ID" | jq -e '.workNormMinutes == 480' >/dev/null
 curl -sS "$DIRECTORY_URL/internal/directory/employers/$ATTENDANCE_NIGHT_ID" | jq -e '.workNormMinutes == 480' >/dev/null
 
-curl -sS -H "X-Lock-User-Id: $ATTENDANCE_NORMAL_ID" -H "X-Lock-User-Email: attendance.normal@lock.local" -H "X-Lock-User-Is-Admin: false" "$ACCESS_URL/internal/access/users/$ATTENDANCE_NORMAL_ID/logs" | jq -e '.logs | length == 2' >/dev/null
-curl -sS -H "X-Lock-User-Id: 11111111-1111-1111-1111-111111111111" -H "X-Lock-User-Email: admin@lock.local" -H "X-Lock-User-Is-Admin: true" "$ACCESS_URL/internal/access/users/$ATTENDANCE_SPLIT_ID/logs" | jq -e '.logs | length == 4' >/dev/null
-curl -sS -H "X-Lock-User-Id: 11111111-1111-1111-1111-111111111111" -H "X-Lock-User-Email: admin@lock.local" -H "X-Lock-User-Is-Admin: true" "$ACCESS_URL/internal/access/users/$ATTENDANCE_SHORT_ID/logs" | jq -e '.logs | length == 2' >/dev/null
-curl -sS -H "X-Lock-User-Id: 11111111-1111-1111-1111-111111111111" -H "X-Lock-User-Email: admin@lock.local" -H "X-Lock-User-Is-Admin: true" "$ACCESS_URL/internal/access/users/$ATTENDANCE_BROKEN_ID/logs" | jq -e '.logs | length == 1' >/dev/null
-curl -sS -H "X-Lock-User-Id: 11111111-1111-1111-1111-111111111111" -H "X-Lock-User-Email: admin@lock.local" -H "X-Lock-User-Is-Admin: true" "$ACCESS_URL/internal/access/users/$ATTENDANCE_NIGHT_ID/logs" | jq -e '.logs | length == 2' >/dev/null
+cURL_CHECK_ADMIN_HEADERS=(-H "X-Lock-User-Id: 11111111-1111-1111-1111-111111111111" -H "X-Lock-User-Email: admin@lock.local" -H "X-Lock-User-Is-Admin: true")
+curl -sS -H "X-Lock-User-Id: $ATTENDANCE_NORMAL_ID" -H "X-Lock-User-Email: attendance.normal@lock.local" -H "X-Lock-User-Is-Admin: false" "$ACCESS_URL/internal/access/users/$ATTENDANCE_NORMAL_ID/logs" | jq -e '.logs | length == 26' >/dev/null
+curl -sS "${cURL_CHECK_ADMIN_HEADERS[@]}" "$ACCESS_URL/internal/access/users/$ATTENDANCE_SPLIT_ID/logs" | jq -e '.logs | length == 28' >/dev/null
+curl -sS "${cURL_CHECK_ADMIN_HEADERS[@]}" "$ACCESS_URL/internal/access/users/$ATTENDANCE_SHORT_ID/logs" | jq -e '.logs | length == 26' >/dev/null
+curl -sS "${cURL_CHECK_ADMIN_HEADERS[@]}" "$ACCESS_URL/internal/access/users/$ATTENDANCE_BROKEN_ID/logs" | jq -e '.logs | length == 26' >/dev/null
+curl -sS "${cURL_CHECK_ADMIN_HEADERS[@]}" "$ACCESS_URL/internal/access/users/$ATTENDANCE_NIGHT_ID/logs" | jq -e '.logs | length == 26' >/dev/null
 [[ "$(curl -sS -o /dev/null -w "%{http_code}" "$ACCESS_URL/internal/access/users/$ATTENDANCE_NORMAL_ID/logs")" == "401" ]]
 [[ "$(curl -sS -o /dev/null -w "%{http_code}" -H "X-Lock-User-Id: $ATTENDANCE_NORMAL_ID" -H "X-Lock-User-Email: attendance.normal@lock.local" -H "X-Lock-User-Is-Admin: false" "$ACCESS_URL/internal/access/users/$ATTENDANCE_SPLIT_ID/logs")" == "403" ]]
+
+echo "Materializing attendance-analysis fixture..."
+"$ROOT_DIR/infrastructure/local/materialize-attendance-analysis-fixture.sh" "$ENV_FILE" >/dev/null
 
 run_attendance_case() {
   local user_id="$1"
@@ -132,20 +137,44 @@ run_attendance_case() {
     '.results | map(select(.day == $day and .status == $status)) | length == 1' >/dev/null
 }
 
-run_attendance_case "$ATTENDANCE_NORMAL_ID" "2026-04-21" "observation_built" 510 0 1 false ""
-run_attendance_case "$ATTENDANCE_SPLIT_ID" "2026-04-21" "observation_built" 495 60 2 false ""
-run_attendance_case "$ATTENDANCE_SHORT_ID" "2026-04-22" "observation_built" 330 0 1 false ""
-run_attendance_case "$ATTENDANCE_BROKEN_ID" "2026-04-23" "technical_anomaly" 0 0 1 true "missing_exit"
-run_attendance_case "$ATTENDANCE_NIGHT_ID" "2026-04-24" "observation_built" 225 0 1 false ""
+run_attendance_case "$ATTENDANCE_NORMAL_ID" "2026-04-22" "signals_ready" 510 0 1 false ""
+run_attendance_case "$ATTENDANCE_SPLIT_ID" "2026-04-22" "signals_ready" 495 60 2 false ""
+run_attendance_case "$ATTENDANCE_SHORT_ID" "2026-04-22" "signals_ready" 330 0 1 false ""
+run_attendance_case "$ATTENDANCE_BROKEN_ID" "2026-04-22" "signals_ready" 485 0 1 false ""
+run_attendance_case "$ATTENDANCE_NIGHT_ID" "2026-04-22" "signals_ready" 225 0 1 false ""
+
+curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$ATTENDANCE_NORMAL_ID/results" | jq -e \
+  --argjson count "$ATTENDANCE_RESULTS_COUNT" \
+  '.results | length == $count and all(.status == "signals_ready") and any(.day == "2026-04-22" and .historyDaysUsed == 3 and .f == 0 and .zS != null and .zT != null and .detailsJson.historyDaysUsed == 3 and (.detailsJson.baselineHistoryDays | length) == 3)' >/dev/null
+
+curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$ATTENDANCE_SPLIT_ID/results" | jq -e \
+  --argjson count "$ATTENDANCE_RESULTS_COUNT" \
+  '.results | length == $count and any(.day == "2026-04-22" and .status == "signals_ready" and .historyDaysUsed == 3 and .stddevStartMinutes > 20 and .zS != null and .zT != null)' >/dev/null
+
+curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$ATTENDANCE_SHORT_ID/results" | jq -e \
+  --argjson count "$ATTENDANCE_RESULTS_COUNT" \
+  '.results | length == $count and any(.day == "2026-04-22" and .status == "signals_ready" and .historyDaysUsed == 3 and .f == 0.6667 and .detailsJson.deficitHistoryDaysCount == 2 and .zS != null and .zT != null)' >/dev/null
+
+curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$ATTENDANCE_BROKEN_ID/results" | jq -e \
+  --argjson count "$ATTENDANCE_RESULTS_COUNT" \
+  '.results | length == $count and all(.status == "signals_ready") and any(.day == "2026-04-22" and .f == 0 and .zS != null and .detailsJson.anomalyReasons == [])' >/dev/null
+
+curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$ATTENDANCE_NIGHT_ID/results" | jq -e \
+  --argjson count "$ATTENDANCE_RESULTS_COUNT" \
+  '.results | length == $count and any(.day == "2026-04-22" and .status == "signals_ready" and .historyDaysUsed == 3 and .f == 0 and .zS != null and .zT != null)' >/dev/null
 
 curl -sS -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d "{\"day\":\"$ATTENDANCE_BATCH_DAY\"}" "$ATTENDANCE_GATEWAY_URL/observations/rebuild-all" | jq -e \
   --arg batchDay "$ATTENDANCE_BATCH_DAY" \
-  '.day == $batchDay and .processedCount >= 7 and (.items | map(select(.result.userId == "22222222-2222-2222-2222-222222222222" and .status == "observation_built")) | length == 1)' >/dev/null
+  '.day == $batchDay and .processedCount >= 7 and (.items | all(.status == "signals_ready")) and (.items | map(select(.result.userId == "22222222-2222-2222-2222-222222222222" and .status == "signals_ready")) | length == 1)' >/dev/null
 
-curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/22222222-2222-2222-2222-222222222222/observations/$ATTENDANCE_BATCH_DAY" | jq -e '.workedMinutes == 240 and .sessionsCount == 1 and .isTechnicalAnomaly == false' >/dev/null
-curl -sS -H "Authorization: Bearer $ATTENDANCE_NORMAL_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$ATTENDANCE_NORMAL_ID/observations/2026-04-21" | jq -e '.workedMinutes == 510' >/dev/null
-[[ "$(curl -sS -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $ATTENDANCE_NORMAL_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$ATTENDANCE_SPLIT_ID/observations/2026-04-21")" == "403" ]]
-[[ "$(curl -sS -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Bearer $ATTENDANCE_NORMAL_TOKEN" -H "Content-Type: application/json" -d "{\"userId\":\"$ATTENDANCE_NORMAL_ID\",\"day\":\"2026-04-21\"}" "$ATTENDANCE_GATEWAY_URL/observations/rebuild")" == "403" ]]
+curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/22222222-2222-2222-2222-222222222222/observations/$ATTENDANCE_BATCH_DAY" | jq -e '.workedMinutes == 485 and .sessionsCount == 1 and .isTechnicalAnomaly == false' >/dev/null
+curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/22222222-2222-2222-2222-222222222222/results" | jq -e \
+  --argjson count "$ATTENDANCE_RESULTS_COUNT" \
+  '.results | length == $count and any(.day == "2026-04-22" and .status == "signals_ready" and .historyDaysUsed == 3)' >/dev/null
+curl -sS -H "Authorization: Bearer $ATTENDANCE_NORMAL_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$ATTENDANCE_NORMAL_ID/observations/2026-04-22" | jq -e '.workedMinutes == 510' >/dev/null
+curl -sS -H "Authorization: Bearer $ATTENDANCE_NORMAL_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$ATTENDANCE_NORMAL_ID/results" | jq -e --argjson count "$ATTENDANCE_RESULTS_COUNT" '.results | length == $count and any(.day == "2026-04-22" and .status == "signals_ready")' >/dev/null
+[[ "$(curl -sS -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $ATTENDANCE_NORMAL_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$ATTENDANCE_SPLIT_ID/observations/2026-04-22")" == "403" ]]
+[[ "$(curl -sS -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Bearer $ATTENDANCE_NORMAL_TOKEN" -H "Content-Type: application/json" -d "{\"userId\":\"$ATTENDANCE_NORMAL_ID\",\"day\":\"2026-04-22\"}" "$ATTENDANCE_GATEWAY_URL/observations/rebuild")" == "403" ]]
 [[ "$(curl -sS -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Bearer $ATTENDANCE_NORMAL_TOKEN" -H "Content-Type: application/json" -d "{\"day\":\"$ATTENDANCE_BATCH_DAY\"}" "$ATTENDANCE_GATEWAY_URL/observations/rebuild-all")" == "403" ]]
 
 echo "All endpoint checks passed through the gateway and attendance-analysis service."

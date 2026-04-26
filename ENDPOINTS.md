@@ -352,17 +352,34 @@ These routes must be verified through the gateway. The underlying attendance-ana
 
 ### Seeded Scenario Users
 
-- `33333333-3333-3333-3333-333333333333` on `2026-04-21`: normal full day, expected `workedMinutes = 510`
-- `44444444-4444-4444-4444-444444444444` on `2026-04-21`: two sessions, expected `workedMinutes = 495`, `breakMinutes = 60`
-- `55555555-5555-5555-5555-555555555555` on `2026-04-22`: short day, expected `workedMinutes = 330`, no technical anomaly
-- `66666666-6666-6666-6666-666666666666` on `2026-04-23`: missing exit, expected `technical_anomaly`
-- `77777777-7777-7777-7777-777777777777` on `2026-04-24`: cross-midnight session, expected `workedMinutes = 225`
-- `22222222-2222-2222-2222-222222222222` on `2026-04-24`: seeded regular user, expected `workedMinutes = 240` after batch rebuild for all users on that day
+- baseline window is `3`
+- `2026-04-06 ... 2026-04-08` are warmup days for seeded attendance users
+- `GET /internal/attendance-analysis/users/:id/results` returns `10` precomputed `signals_ready` rows for `2026-04-09 ... 2026-04-22`
+- `33333333-3333-3333-3333-333333333333` on `2026-04-22`: stable-history user, expected `signals_ready`, `historyDaysUsed = 3`, `F = 0`
+- `44444444-4444-4444-4444-444444444444` on `2026-04-22`: variable-start-time user, expected `signals_ready`, `sessionsCount = 2`, non-zero `stddevStartMinutes`
+- `55555555-5555-5555-5555-555555555555` on `2026-04-22`: repeated-deficit user, expected `signals_ready`, `historyDaysUsed = 3`, `F = 0.6667`
+- `66666666-6666-6666-6666-666666666666` on `2026-04-22`: valid early-shift user, expected `signals_ready` with empty `anomalyReasons`
+- `77777777-7777-7777-7777-777777777777` on `2026-04-22`: cross-midnight session, expected `workedMinutes = 225`, `historyDaysUsed = 3`, `F = 0`
+- `22222222-2222-2222-2222-222222222222` on `2026-04-22`: seeded regular user, expected `workedMinutes = 485`, `historyDaysUsed = 3`
 
 ### Persistence Note
 
 - `GET /internal/attendance-analysis/users/:id/observations*` reads already persisted observation rows
-- rows appear after one of the trigger endpoints has been executed for that user/day or for all users of that day
+- local `./infrastructure/local/start-stack.sh` automatically materializes the seeded attendance fixture on startup
+- rows also appear after one of the trigger endpoints has been executed for that user/day or for all users of that day
+- `GET /internal/attendance-analysis/users/:id/results` reads only persisted `signals_ready` rows and returns stored baseline/core-signal fields
+
+### Baseline Window
+
+- default baseline window: `3`
+- configurable by `LOCKSERVER_ATTENDANCE_ANALYSIS_BASELINE_WINDOW_DAYS`
+
+### Result Statuses
+
+- `signals_ready`: observation exists, enough valid history exists, baseline and `Z_s`/`Z_t`/`F` were persisted
+- `insufficient_history`: observation exists, but fewer than `N` previous valid days were materialized
+- `technical_anomaly`: target day was materialized as broken data and excluded from signal calculation
+- `not_ready`: no raw events were materialized for the requested day
 
 ### `POST /internal/attendance-analysis/observations/run`
 
@@ -376,7 +393,7 @@ These routes must be verified through the gateway. The underlying attendance-ana
 ```json
 {
   "userId": "33333333-3333-3333-3333-333333333333",
-  "day": "2026-04-21"
+  "day": "2026-04-22"
 }
 ```
 
@@ -384,12 +401,12 @@ These routes must be verified through the gateway. The underlying attendance-ana
 
 ```json
 {
-  "status": "observation_built",
+  "status": "signals_ready",
   "observation": {
     "id": "uuid",
     "userId": "33333333-3333-3333-3333-333333333333",
-    "day": "2026-04-21",
-    "firstEntryTime": "2026-04-21T09:00:00Z",
+    "day": "2026-04-22",
+    "firstEntryTime": "2026-04-22T09:00:00Z",
     "workedMinutes": 510,
     "breakMinutes": 0,
     "sessionsCount": 1,
@@ -401,33 +418,61 @@ These routes must be verified through the gateway. The underlying attendance-ana
   "result": {
     "id": "uuid",
     "userId": "33333333-3333-3333-3333-333333333333",
-    "day": "2026-04-21",
-    "status": "observation_built",
+    "day": "2026-04-22",
+    "status": "signals_ready",
     "observationId": "uuid",
+    "historyDaysUsed": 3,
+    "averageStartMinutes": 539.6667,
+    "stddevStartMinutes": 1.2472,
+    "stddevWorkedMinutes": 0,
+    "workNormMinutes": 480,
+    "zS": 8,
+    "zT": 0.2672,
+    "f": 0,
     "detailsJson": {
       "workNormMinutes": 480,
       "rawEventCount": 2,
       "rawEvents": [
         {
           "type": "enter",
-          "time": "2026-04-21T09:00:00Z"
+          "time": "2026-04-22T09:00:00Z"
         },
         {
           "type": "exit",
-          "time": "2026-04-21T17:30:00Z"
+          "time": "2026-04-22T17:30:00Z"
         }
       ],
       "sessionStartsCount": 1,
       "completedSessionsCount": 1,
       "sessionRanges": [
         {
-          "start": "2026-04-21T09:00:00Z",
-          "end": "2026-04-21T17:30:00Z",
+          "start": "2026-04-22T09:00:00Z",
+          "end": "2026-04-22T17:30:00Z",
           "workedMinutes": 510
         }
       ],
       "anomalyReasons": [],
-      "note": null
+      "baselineWindowDays": 3,
+      "historyDaysUsed": 3,
+      "baselineHistoryDays": [
+        {
+          "day": "2026-04-17",
+          "firstEntryTime": "2026-04-17T08:58:00Z",
+          "startMinutes": 538,
+          "workedMinutes": 482,
+          "isDeficit": false
+        }
+      ],
+      "deficitHistoryDaysCount": 0,
+      "averageStartMinutes": 539.6667,
+      "stddevStartMinutes": 1.2472,
+      "stddevWorkedMinutes": 0,
+      "zS": 8,
+      "zT": 0.2672,
+      "f": 0,
+      "calculationNotes": [
+        "z_s_used_zero_variance_cap"
+      ]
     },
     "createdAt": "2026-04-25T18:00:00Z",
     "updatedAt": "2026-04-25T18:00:00Z"
@@ -458,7 +503,7 @@ These routes must be verified through the gateway. The underlying attendance-ana
 
 ```json
 {
-  "day": "2026-04-24"
+  "day": "2026-04-22"
 }
 ```
 
@@ -478,13 +523,13 @@ These routes must be verified through the gateway. The underlying attendance-ana
 
 ```json
 {
-  "day": "2026-04-24"
+  "day": "2026-04-22"
 }
 ```
 
 - Notes:
   - rebuilds observations for all directory users for the requested day
-  - for `2026-04-24`, this includes the seeded user `22222222-2222-2222-2222-222222222222`
+  - for `2026-04-22`, this includes the seeded user `22222222-2222-2222-2222-222222222222`
   - overwrites already persisted rows for that day across all directory users
 
 ### `GET /internal/attendance-analysis/users/:id/observations`
@@ -503,8 +548,8 @@ These routes must be verified through the gateway. The underlying attendance-ana
     {
       "id": "uuid",
       "userId": "33333333-3333-3333-3333-333333333333",
-      "day": "2026-04-21",
-      "firstEntryTime": "2026-04-21T09:00:00Z",
+      "day": "2026-04-22",
+      "firstEntryTime": "2026-04-22T09:00:00Z",
       "workedMinutes": 510,
       "breakMinutes": 0,
       "sessionsCount": 1,
@@ -528,7 +573,7 @@ These routes must be verified through the gateway. The underlying attendance-ana
 - Example:
 
 ```http
-GET /internal/attendance-analysis/users/33333333-3333-3333-3333-333333333333/observations/2026-04-21
+GET /internal/attendance-analysis/users/33333333-3333-3333-3333-333333333333/observations/2026-04-22
 ```
 
 ### `GET /internal/attendance-analysis/users/:id/results`
@@ -539,6 +584,48 @@ GET /internal/attendance-analysis/users/33333333-3333-3333-3333-333333333333/obs
 - Access rule:
   - admin can request any user
   - regular user can request only own user id
+- Response:
+
+```json
+{
+  "results": [
+    {
+      "id": "uuid",
+      "userId": "33333333-3333-3333-3333-333333333333",
+      "day": "2026-04-22",
+      "status": "signals_ready",
+      "observationId": "uuid",
+      "historyDaysUsed": 3,
+      "averageStartMinutes": 539.6667,
+      "stddevStartMinutes": 1.2472,
+      "stddevWorkedMinutes": 0,
+      "workNormMinutes": 480,
+      "zS": 8,
+      "zT": 0.2672,
+      "f": 0,
+      "detailsJson": {
+        "baselineWindowDays": 3,
+        "historyDaysUsed": 3,
+        "deficitHistoryDaysCount": 0,
+        "baselineHistoryDays": [
+          {
+            "day": "2026-04-17",
+            "firstEntryTime": "2026-04-17T08:58:00Z",
+            "startMinutes": 538,
+            "workedMinutes": 482,
+            "isDeficit": false
+          }
+        ],
+        "calculationNotes": [
+          "z_s_used_zero_variance_cap"
+        ]
+      },
+      "createdAt": "2026-04-26T10:34:32Z",
+      "updatedAt": "2026-04-26T10:34:32Z"
+    }
+  ]
+}
+```
 
 ### Auxiliary Internal Raw Logs Endpoint
 

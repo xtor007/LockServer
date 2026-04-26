@@ -23,7 +23,18 @@ struct AttendanceObservationBuilder {
                     completedSessionsCount: 0,
                     sessionRanges: [],
                     anomalyReasons: [],
-                    note: "no_raw_events_for_day"
+                    note: "no_raw_events_for_day",
+                    baselineWindowDays: nil,
+                    historyDaysUsed: nil,
+                    baselineHistoryDays: nil,
+                    deficitHistoryDaysCount: nil,
+                    averageStartMinutes: nil,
+                    stddevStartMinutes: nil,
+                    stddevWorkedMinutes: nil,
+                    zS: nil,
+                    zT: nil,
+                    f: nil,
+                    calculationNotes: nil
                 )
             )
         }
@@ -53,7 +64,18 @@ struct AttendanceObservationBuilder {
                 completedSessionsCount: sessions.count,
                 sessionRanges: sessions,
                 anomalyReasons: anomalyReasons,
-                note: nil
+                note: nil,
+                baselineWindowDays: nil,
+                historyDaysUsed: nil,
+                baselineHistoryDays: nil,
+                deficitHistoryDaysCount: nil,
+                averageStartMinutes: nil,
+                stddevStartMinutes: nil,
+                stddevWorkedMinutes: nil,
+                zS: nil,
+                zT: nil,
+                f: nil,
+                calculationNotes: nil
             )
         )
     }

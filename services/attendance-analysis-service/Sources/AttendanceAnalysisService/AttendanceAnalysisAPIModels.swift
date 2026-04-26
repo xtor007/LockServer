@@ -3,7 +3,9 @@ import Vapor
 
 enum AttendanceAnalysisStatus: String, Codable {
     case observationBuilt = "observation_built"
+    case signalsReady = "signals_ready"
     case technicalAnomaly = "technical_anomaly"
+    case insufficientHistory = "insufficient_history"
     case notReady = "not_ready"
 }
 
@@ -58,6 +60,14 @@ struct AttendanceAnalysisResultResponse: Content {
     let day: String
     let status: String
     let observationId: UUID?
+    let historyDaysUsed: Int
+    let averageStartMinutes: Double?
+    let stddevStartMinutes: Double?
+    let stddevWorkedMinutes: Double?
+    let workNormMinutes: Int
+    let zS: Double?
+    let zT: Double?
+    let f: Double?
     let detailsJson: AttendanceAnalysisDebugDetails
     let createdAt: Date?
     let updatedAt: Date?
@@ -72,6 +82,17 @@ struct AttendanceAnalysisDebugDetails: Content, Codable, Equatable {
     let sessionRanges: [AttendanceDebugSession]
     let anomalyReasons: [String]
     let note: String?
+    let baselineWindowDays: Int?
+    let historyDaysUsed: Int?
+    let baselineHistoryDays: [AttendanceBaselineHistoryDebugDay]?
+    let deficitHistoryDaysCount: Int?
+    let averageStartMinutes: Double?
+    let stddevStartMinutes: Double?
+    let stddevWorkedMinutes: Double?
+    let zS: Double?
+    let zT: Double?
+    let f: Double?
+    let calculationNotes: [String]?
 }
 
 struct AttendanceDebugEvent: Content, Codable, Equatable {
@@ -83,6 +104,14 @@ struct AttendanceDebugSession: Content, Codable, Equatable {
     let start: Date
     let end: Date
     let workedMinutes: Int
+}
+
+struct AttendanceBaselineHistoryDebugDay: Content, Codable, Equatable {
+    let day: String
+    let firstEntryTime: Date
+    let startMinutes: Int
+    let workedMinutes: Int
+    let isDeficit: Bool
 }
 
 struct AttendanceObservationDraft {
@@ -99,5 +128,19 @@ struct AttendanceObservationDraft {
 struct AttendanceObservationBuildOutcome {
     let status: AttendanceAnalysisStatus
     let observation: AttendanceObservationDraft?
+    let details: AttendanceAnalysisDebugDetails
+}
+
+struct AttendanceAnalysisResultDraft {
+    let status: AttendanceAnalysisStatus
+    let observationId: UUID?
+    let historyDaysUsed: Int
+    let averageStartMinutes: Double?
+    let stddevStartMinutes: Double?
+    let stddevWorkedMinutes: Double?
+    let workNormMinutes: Int
+    let zS: Double?
+    let zT: Double?
+    let f: Double?
     let details: AttendanceAnalysisDebugDetails
 }

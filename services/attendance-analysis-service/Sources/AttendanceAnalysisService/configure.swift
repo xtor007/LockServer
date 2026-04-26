@@ -10,11 +10,13 @@ func configure(_ app: Application) async throws {
 
     app.migrations.add(CreateAttendanceDayObservation())
     app.migrations.add(CreateAttendanceAnalysisResult())
+    app.migrations.add(AddAttendanceAnalysisResultCoreSignals())
     try await app.autoMigrate()
 
     let manager = AttendanceAnalysisManager(
         directoryClient: AttendanceDirectoryServiceClient(client: app.client, baseURL: try ServiceEndpoints.directoryBaseURL()),
-        accessClient: AttendanceAccessServiceClient(client: app.client, baseURL: try ServiceEndpoints.accessBaseURL())
+        accessClient: AttendanceAccessServiceClient(client: app.client, baseURL: try ServiceEndpoints.accessBaseURL()),
+        baselineWindowDays: try EnvironmentValue.int("LOCKSERVER_ATTENDANCE_ANALYSIS_BASELINE_WINDOW_DAYS", default: 3)
     )
     let authClient = AttendanceAuthServiceClient(client: app.client, baseURL: try ServiceEndpoints.authBaseURL())
 
