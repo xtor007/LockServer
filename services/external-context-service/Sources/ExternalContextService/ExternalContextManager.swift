@@ -4,6 +4,7 @@ import LockServerContracts
 import Vapor
 
 struct ExternalContextManager {
+    private let airAlertsProvider: MockAirAlertsProviderClient?
     private let trafficProvider: PTVTrafficProviderClient?
     private let powerProvider: DTEKCityPowerProviderClient?
     private let weatherProvider: OpenMeteoWeatherProviderClient?
@@ -12,11 +13,13 @@ struct ExternalContextManager {
     private let decoder: JSONDecoder
 
     init(
+        airAlertsProvider: MockAirAlertsProviderClient?,
         trafficProvider: PTVTrafficProviderClient?,
         powerProvider: DTEKCityPowerProviderClient?,
         weatherProvider: OpenMeteoWeatherProviderClient?,
         trafficFallbackMode: TrafficFallbackMode
     ) {
+        self.airAlertsProvider = airAlertsProvider
         self.trafficProvider = trafficProvider
         self.powerProvider = powerProvider
         self.weatherProvider = weatherProvider
@@ -38,8 +41,18 @@ enum TrafficFallbackMode {
 }
 
 extension ExternalContextManager {
-    func contexts(for dayString: String, on database: Database) async throws -> ExternalContextDayResponse {
+    func contexts(
+        for dayString: String,
+        arrivalTime: Date?,
+        materializeIfNeeded: Bool,
+        on database: Database
+    ) async throws -> ExternalContextDayResponse {
         let day = try ExternalContextDay(dayString)
+
+        if materializeIfNeeded {
+            try await ensureDayMaterialized(day: day, arrivalTime: arrivalTime, on: database)
+        }
+
         let items = try await ExternalContextCache.query(on: database)
             .filter(\.$day == day.startOfDay)
             .sort(\.$factor, .ascending)
@@ -54,17 +67,66 @@ extension ExternalContextManager {
         guard let factor = ExternalContextFactor(rawValue: factorString) else {
             throw Abort(.badRequest, reason: "Unsupported external context factor")
         }
+
         guard let entry = try await findEntry(day: day, factor: factor, on: database) else {
             throw Abort(.notFound, reason: "External context not found")
         }
         return makeFactorResponse(entry)
     }
 
-    func resolveTraffic(_ request: TrafficContextResolveRequest, on database: Database) async throws -> TrafficContextResolvedValue {
-        let day = try ExternalContextDay(request.day)
+    func resolveAirAlerts(day: ExternalContextDay, on database: Database) async throws -> AirAlertsContextResolvedValue {
+        let factor = ExternalContextFactor.airAlerts
+        let city = airAlertsProviderCity
+
+        let existing = try await findEntry(day: day, factor: factor, city: city, on: database)
+        let resolvedEnvelope = decodeAirAlertsResolvedEnvelope(existing?.resolvedValueJson)
+
+        if let resolvedValue = resolvedEnvelope.value {
+            return resolvedValue
+        }
+
+        guard let airAlertsProvider else {
+            throw Abort(.serviceUnavailable, reason: "Mock air-alerts provider is not configured")
+        }
+
+        let rawEnvelope = decodeAirAlertsRawEnvelope(existing?.rawPayloadJson)
+        let rawPayload: MockAirAlertsRawPayload
+        let sourceURL: String
+        let fetchedAt: Date?
+
+        if let cachedPayload = rawEnvelope.payload, cachedPayload.day == day.stringValue {
+            rawPayload = cachedPayload
+            sourceURL = existing?.sourceURL ?? airAlertsSourceURL
+            fetchedAt = nil
+        } else {
+            let fetchOutput = try await airAlertsProvider.fetchAirAlerts(for: day)
+            rawPayload = fetchOutput.rawPayload
+            sourceURL = fetchOutput.sourceURL
+            fetchedAt = Date()
+        }
+
+        let sourceAggregate = AirAlertsContextAggregator.makeSourceAggregate(rawPayload: rawPayload)
+        let resolvedValue = AirAlertsContextAggregator.makeResolvedValue(sourceAggregate: sourceAggregate)
+
+        _ = try await upsertAirAlertsEntry(
+            existing: existing,
+            day: day,
+            city: city,
+            rawPayload: rawPayload,
+            sourceURL: sourceURL,
+            sourceAggregate: sourceAggregate,
+            resolvedValue: resolvedValue,
+            fetchedAt: fetchedAt,
+            on: database
+        )
+
+        return resolvedValue
+    }
+
+    func resolveTraffic(day: ExternalContextDay, arrivalTime: Date, on database: Database) async throws -> TrafficContextResolvedValue {
         let factor = ExternalContextFactor.traffic
         let city = trafficProviderCity
-        let bucketKey = hourBucketKey(for: request.arrivalTime)
+        let bucketKey = hourBucketKey(for: arrivalTime)
 
         let existing = try await findEntry(day: day, factor: factor, city: city, on: database)
         let resolvedEnvelope = decodeTrafficResolvedEnvelope(existing?.resolvedValueJson)
@@ -80,7 +142,7 @@ extension ExternalContextManager {
 
         if let trafficProvider {
             do {
-                let fetchOutput = try await trafficProvider.fetchTraffic(at: request.arrivalTime)
+                let fetchOutput = try await trafficProvider.fetchTraffic(at: arrivalTime)
                 sourceAggregate = TrafficContextAggregator.makeSourceAggregate(providerMode: fetchOutput.providerMode, routes: fetchOutput.routes)
                 sourceName = trafficSourceName
                 sourceURL = trafficSourceURL
@@ -89,7 +151,7 @@ extension ExternalContextManager {
                 guard trafficFallbackMode == .fixtureWhenUnavailable else {
                     throw error
                 }
-                sourceAggregate = TrafficContextFallback.makeSourceAggregate(for: request.arrivalTime)
+                sourceAggregate = TrafficContextFallback.makeSourceAggregate(for: arrivalTime)
                 sourceName = trafficFallbackSourceName
                 sourceURL = trafficFallbackSourceURL
                 fetchStatus = .cached
@@ -98,7 +160,7 @@ extension ExternalContextManager {
             guard trafficFallbackMode == .fixtureWhenUnavailable else {
                 throw Abort(.serviceUnavailable, reason: "PTV traffic provider is not configured")
             }
-            sourceAggregate = TrafficContextFallback.makeSourceAggregate(for: request.arrivalTime)
+            sourceAggregate = TrafficContextFallback.makeSourceAggregate(for: arrivalTime)
             sourceName = trafficFallbackSourceName
             sourceURL = trafficFallbackSourceURL
             fetchStatus = .cached
@@ -124,11 +186,10 @@ extension ExternalContextManager {
         return resolvedValue
     }
 
-    func resolvePower(_ request: PowerContextResolveRequest, on database: Database) async throws -> PowerContextResolvedValue {
-        let day = try ExternalContextDay(request.day)
+    func resolvePower(day: ExternalContextDay, arrivalTime: Date, on database: Database) async throws -> PowerContextResolvedValue {
         let factor = ExternalContextFactor.powerAvailability
         let city = powerProviderCity
-        let bucketKey = hourBucketKey(for: request.arrivalTime)
+        let bucketKey = hourBucketKey(for: arrivalTime)
 
         let existing = try await findEntry(day: day, factor: factor, city: city, on: database)
         let resolvedEnvelope = decodePowerResolvedEnvelope(existing?.resolvedValueJson)
@@ -156,7 +217,7 @@ extension ExternalContextManager {
         }
 
         let sourceAggregate = PowerContextAggregator.makeSourceAggregate(
-            arrivalTime: request.arrivalTime,
+            arrivalTime: arrivalTime,
             maxSignalAgeHours: powerMaxSignalAgeHours,
             signals: signals
         )
@@ -177,12 +238,11 @@ extension ExternalContextManager {
         return resolvedValue
     }
 
-    func resolveWeather(_ request: WeatherContextResolveRequest, on database: Database) async throws -> WeatherContextResolvedValue {
-        let day = try ExternalContextDay(request.day)
+    func resolveWeather(day: ExternalContextDay, arrivalTime: Date, on database: Database) async throws -> WeatherContextResolvedValue {
         let factor = ExternalContextFactor.weather
         let city = weatherProviderCity
-        let bucketKey = hourBucketKey(for: request.arrivalTime)
-        let observationTime = request.arrivalTime.addingTimeInterval(-60 * 60)
+        let bucketKey = hourBucketKey(for: arrivalTime)
+        let observationTime = arrivalTime.addingTimeInterval(-60 * 60)
 
         let existing = try await findEntry(day: day, factor: factor, city: city, on: database)
         let resolvedEnvelope = decodeWeatherResolvedEnvelope(existing?.resolvedValueJson)
@@ -235,6 +295,18 @@ extension ExternalContextManager {
 }
 
 private extension ExternalContextManager {
+    var airAlertsSourceName: String {
+        MockAirAlertsConfiguration.kyivDefault.sourceName
+    }
+
+    var airAlertsSourceURL: String {
+        MockAirAlertsConfiguration.kyivDefault.sourceURL
+    }
+
+    var airAlertsProviderCity: String {
+        MockAirAlertsConfiguration.kyivDefault.city
+    }
+
     var trafficSourceName: String {
         PTVTrafficConfiguration.kyivDefault.sourceName
     }
@@ -281,6 +353,18 @@ private extension ExternalContextManager {
 
     struct TrafficRawPayloadEnvelope: Codable {
         var buckets: [String: TrafficSourceAggregate]
+    }
+
+    struct AirAlertsRawPayloadEnvelope: Codable {
+        var payload: MockAirAlertsRawPayload?
+    }
+
+    struct AirAlertsParsedPayloadEnvelope: Codable {
+        var value: AirAlertsSourceAggregate?
+    }
+
+    struct AirAlertsResolvedPayloadEnvelope: Codable {
+        var value: AirAlertsContextResolvedValue?
     }
 
     struct TrafficParsedPayloadEnvelope: Codable {
@@ -330,6 +414,22 @@ private extension ExternalContextManager {
             .first()
     }
 
+    func ensureDayMaterialized(
+        day: ExternalContextDay,
+        arrivalTime: Date?,
+        on database: Database
+    ) async throws {
+        _ = try await resolveAirAlerts(day: day, on: database)
+
+        guard let arrivalTime else {
+            throw Abort(.badRequest, reason: "arrivalTime query is required for external-context materialization")
+        }
+
+        _ = try await resolveTraffic(day: day, arrivalTime: arrivalTime, on: database)
+        _ = try await resolvePower(day: day, arrivalTime: arrivalTime, on: database)
+        _ = try await resolveWeather(day: day, arrivalTime: arrivalTime, on: database)
+    }
+
     func upsertTrafficEntry(
         existing: ExternalContextCache?,
         day: ExternalContextDay,
@@ -377,6 +477,56 @@ private extension ExternalContextManager {
             rawPayloadJson: rawPayloadJson,
             parsedPayloadJson: parsedPayloadJson,
             resolvedValueJson: resolvedValueJson,
+            fetchedAt: fetchedAt
+        )
+        try await entry.create(on: database)
+        return entry
+    }
+
+    func upsertAirAlertsEntry(
+        existing: ExternalContextCache?,
+        day: ExternalContextDay,
+        city: String,
+        rawPayload: MockAirAlertsRawPayload,
+        sourceURL: String,
+        sourceAggregate: AirAlertsSourceAggregate,
+        resolvedValue: AirAlertsContextResolvedValue,
+        fetchedAt: Date?,
+        on database: Database
+    ) async throws -> ExternalContextCache {
+        let rawEnvelope = AirAlertsRawPayloadEnvelope(payload: rawPayload)
+        let parsedEnvelope = AirAlertsParsedPayloadEnvelope(value: sourceAggregate)
+        let resolvedEnvelope = AirAlertsResolvedPayloadEnvelope(value: resolvedValue)
+
+        let rawPayloadJson = try encode(rawEnvelope)
+        let parsedPayloadJson = try encode(parsedEnvelope)
+        let resolvedValueJson = try encode(resolvedEnvelope)
+        let sourceUpdatedAt = rawPayload.intervals.map(\.endedAt).max() ?? rawPayload.generatedAt
+
+        if let existing {
+            existing.sourceName = airAlertsSourceName
+            existing.sourceURL = sourceURL
+            existing.fetchStatus = ExternalContextFetchStatus.fetched.rawValue
+            existing.rawPayloadJson = rawPayloadJson
+            existing.parsedPayloadJson = parsedPayloadJson
+            existing.resolvedValueJson = resolvedValueJson
+            existing.sourceUpdatedAt = sourceUpdatedAt
+            existing.fetchedAt = fetchedAt ?? existing.fetchedAt
+            try await existing.update(on: database)
+            return existing
+        }
+
+        let entry = ExternalContextCache(
+            factor: ExternalContextFactor.airAlerts.rawValue,
+            day: day.startOfDay,
+            city: city,
+            sourceName: airAlertsSourceName,
+            sourceURL: sourceURL,
+            fetchStatus: ExternalContextFetchStatus.fetched.rawValue,
+            rawPayloadJson: rawPayloadJson,
+            parsedPayloadJson: parsedPayloadJson,
+            resolvedValueJson: resolvedValueJson,
+            sourceUpdatedAt: sourceUpdatedAt,
             fetchedAt: fetchedAt
         )
         try await entry.create(on: database)
@@ -490,18 +640,47 @@ private extension ExternalContextManager {
     }
 
     func makeDayFactorResponse(_ entry: ExternalContextCache) -> ExternalContextDayFactorResponse {
-        ExternalContextDayFactorResponse(
-            factor: entry.factor,
-            values: makeHourValues(from: entry.factor, json: entry.resolvedValueJson)
-        )
+        guard let factor = ExternalContextFactor(rawValue: entry.factor) else {
+            return ExternalContextDayFactorResponse(factor: entry.factor, values: [])
+        }
+
+        switch factor {
+        case .airAlerts:
+            return ExternalContextDayFactorResponse(
+                factor: entry.factor,
+                intervals: decodeAirAlertsResolvedEnvelope(entry.resolvedValueJson).value?.intervals ?? []
+            )
+        case .traffic, .powerAvailability, .weather:
+            return ExternalContextDayFactorResponse(
+                factor: entry.factor,
+                values: makeHourValues(from: entry.factor, json: entry.resolvedValueJson)
+            )
+        }
     }
 
     func makeFactorResponse(_ entry: ExternalContextCache) -> ExternalContextFactorResponse {
-        ExternalContextFactorResponse(
-            day: ExternalContextDay(date: entry.day).stringValue,
-            factor: entry.factor,
-            values: makeHourValues(from: entry.factor, json: entry.resolvedValueJson)
-        )
+        guard let factor = ExternalContextFactor(rawValue: entry.factor) else {
+            return ExternalContextFactorResponse(
+                day: ExternalContextDay(date: entry.day).stringValue,
+                factor: entry.factor,
+                values: []
+            )
+        }
+
+        switch factor {
+        case .airAlerts:
+            return ExternalContextFactorResponse(
+                day: ExternalContextDay(date: entry.day).stringValue,
+                factor: entry.factor,
+                intervals: decodeAirAlertsResolvedEnvelope(entry.resolvedValueJson).value?.intervals ?? []
+            )
+        case .traffic, .powerAvailability, .weather:
+            return ExternalContextFactorResponse(
+                day: ExternalContextDay(date: entry.day).stringValue,
+                factor: entry.factor,
+                values: makeHourValues(from: entry.factor, json: entry.resolvedValueJson)
+            )
+        }
     }
 
     func hourBucketKey(for arrivalTime: Date) -> String {
@@ -513,6 +692,18 @@ private extension ExternalContextManager {
 
     func decodeTrafficRawEnvelope(_ json: String?) -> TrafficRawPayloadEnvelope {
         decodeEnvelope(json, default: TrafficRawPayloadEnvelope(buckets: [:]))
+    }
+
+    func decodeAirAlertsRawEnvelope(_ json: String?) -> AirAlertsRawPayloadEnvelope {
+        decodeEnvelope(json, default: AirAlertsRawPayloadEnvelope(payload: nil))
+    }
+
+    func decodeAirAlertsParsedEnvelope(_ json: String?) -> AirAlertsParsedPayloadEnvelope {
+        decodeEnvelope(json, default: AirAlertsParsedPayloadEnvelope(value: nil))
+    }
+
+    func decodeAirAlertsResolvedEnvelope(_ json: String?) -> AirAlertsResolvedPayloadEnvelope {
+        decodeEnvelope(json, default: AirAlertsResolvedPayloadEnvelope(value: nil))
     }
 
     func decodeTrafficParsedEnvelope(_ json: String?) -> TrafficParsedPayloadEnvelope {

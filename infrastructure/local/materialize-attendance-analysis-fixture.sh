@@ -19,7 +19,6 @@ set +a
 
 GATEWAY_URL="http://127.0.0.1:${LOCKSERVER_GATEWAY_PORT}"
 ATTENDANCE_GATEWAY_URL="$GATEWAY_URL/internal/attendance-analysis"
-EXTERNAL_CONTEXT_URL="http://127.0.0.1:${LOCKSERVER_EXTERNAL_CONTEXT_PORT}"
 ATTENDANCE_FIXTURE_DAYS=(
   "2026-04-06"
   "2026-04-07"
@@ -35,6 +34,8 @@ ATTENDANCE_FIXTURE_DAYS=(
   "2026-04-21"
   "2026-04-22"
 )
+CURRENT_UTC_DAY="$(date -u +%F)"
+CURRENT_DAY_TRIGGER_USER_ID="11111111-1111-1111-1111-111111111111"
 
 ADMIN_TOKEN="$(curl -sS -u admin@lock.local:admin1234 "$GATEWAY_URL/auth/getToken" | jq -r '.auth')"
 if [[ -z "$ADMIN_TOKEN" || "$ADMIN_TOKEN" == "null" ]]; then
@@ -52,34 +53,13 @@ for day in "${ATTENDANCE_FIXTURE_DAYS[@]}"; do
     | jq -e --arg day "$day" '.day == $day and .processedCount >= 7 and (.items | all(.status == "signals_ready" or .status == "insufficient_history"))' >/dev/null
 done
 
-TODAY_UTC="$(date -u +%F)"
-TODAY_SAMPLE_ARRIVAL_TIME="${TODAY_UTC}T08:00:00Z"
-
-echo "Materializing current external-context sample for $TODAY_UTC..."
-if [[ -n "${LOCKSERVER_EXTERNAL_CONTEXT_PTV_API_KEY:-}" ]]; then
-  if ! curl -sS -X POST \
+if [[ ! " ${ATTENDANCE_FIXTURE_DAYS[*]} " =~ " ${CURRENT_UTC_DAY} " ]]; then
+  curl -sS -X POST \
+    -H "Authorization: Bearer $ADMIN_TOKEN" \
     -H "Content-Type: application/json" \
-    -d "{\"day\":\"$TODAY_UTC\",\"arrivalTime\":\"$TODAY_SAMPLE_ARRIVAL_TIME\"}" \
-    "$EXTERNAL_CONTEXT_URL/internal/external-context/traffic/resolve" \
-    | jq -e '.trafficScore != null' >/dev/null; then
-    echo "Warning: failed to materialize current traffic sample."
-  fi
-fi
-
-if ! curl -sS -X POST \
-  -H "Content-Type: application/json" \
-  -d "{\"day\":\"$TODAY_UTC\",\"arrivalTime\":\"$TODAY_SAMPLE_ARRIVAL_TIME\"}" \
-  "$EXTERNAL_CONTEXT_URL/internal/external-context/power/resolve" \
-  | jq -e 'has("powerScore")' >/dev/null; then
-  echo "Warning: failed to materialize current power sample."
-fi
-
-if ! curl -sS -X POST \
-  -H "Content-Type: application/json" \
-  -d "{\"day\":\"$TODAY_UTC\",\"arrivalTime\":\"$TODAY_SAMPLE_ARRIVAL_TIME\"}" \
-  "$EXTERNAL_CONTEXT_URL/internal/external-context/weather/resolve" \
-  | jq -e 'has("weatherScore")' >/dev/null; then
-  echo "Warning: failed to materialize current weather sample."
+    -d "{\"userId\":\"$CURRENT_DAY_TRIGGER_USER_ID\",\"day\":\"$CURRENT_UTC_DAY\"}" \
+    "$ATTENDANCE_GATEWAY_URL/observations/rebuild" \
+    | jq -e --arg day "$CURRENT_UTC_DAY" --arg userId "$CURRENT_DAY_TRIGGER_USER_ID" '.result.userId == $userId and .result.day == $day and .observation != null and (.status == "signals_ready" or .status == "insufficient_history")' >/dev/null
 fi
 
 echo "Attendance-analysis fixture is materialized."

@@ -14,42 +14,56 @@ struct ExternalContextController: RouteCollection {
         let externalContext = routes.grouped("internal", "external-context")
         externalContext.get(":day", use: getContextsForDay)
         externalContext.get(":day", ":factor", use: getContextForFactor)
-        externalContext.post("traffic", "resolve", use: resolveTraffic)
-        externalContext.post("power", "resolve", use: resolvePower)
-        externalContext.post("weather", "resolve", use: resolveWeather)
     }
 
     private func getContextsForDay(req: Request) async throws -> ExternalContextDayResponse {
+        let day = try req.parameters.require("day")
+
+        if internalRequestSource(req) == "attendance-analysis" {
+            guard let arrivalTime = try arrivalTimeQuery(req) else {
+                throw Abort(.badRequest, reason: "arrivalTime query is required for internal day materialization")
+            }
+            return try await manager.contexts(for: day, arrivalTime: arrivalTime, materializeIfNeeded: true, on: req.db)
+        }
+
         let context = try await authClient.authenticatedContext(headers: req.headers)
         guard context.isAdmin else {
             throw Abort(.forbidden, reason: "Admin token required")
         }
-        let day = try req.parameters.require("day")
-        return try await manager.contexts(for: day, on: req.db)
+        return try await manager.contexts(for: day, arrivalTime: nil, materializeIfNeeded: false, on: req.db)
     }
 
     private func getContextForFactor(req: Request) async throws -> ExternalContextFactorResponse {
+        let day = try req.parameters.require("day")
+        let factor = try req.parameters.require("factor")
+
         let context = try await authClient.authenticatedContext(headers: req.headers)
         guard context.isAdmin else {
             throw Abort(.forbidden, reason: "Admin token required")
         }
-        let day = try req.parameters.require("day")
-        let factor = try req.parameters.require("factor")
         return try await manager.context(for: day, factorString: factor, on: req.db)
     }
+}
 
-    private func resolveTraffic(req: Request) async throws -> TrafficContextResolvedValue {
-        let payload = try req.content.decode(TrafficContextResolveRequest.self)
-        return try await manager.resolveTraffic(payload, on: req.db)
+private extension ExternalContextController {
+    func internalRequestSource(_ req: Request) -> String? {
+        req.headers.first(name: "X-LockServer-Internal-Service")
     }
 
-    private func resolvePower(req: Request) async throws -> PowerContextResolvedValue {
-        let payload = try req.content.decode(PowerContextResolveRequest.self)
-        return try await manager.resolvePower(payload, on: req.db)
+    func arrivalTimeQuery(_ req: Request) throws -> Date? {
+        guard let rawValue = try? req.query.get(String.self, at: "arrivalTime") else {
+            return nil
+        }
+        guard let date = Self.iso8601Formatter.date(from: rawValue) else {
+            throw Abort(.badRequest, reason: "arrivalTime query must use ISO-8601 format")
+        }
+        return date
     }
 
-    private func resolveWeather(req: Request) async throws -> WeatherContextResolvedValue {
-        let payload = try req.content.decode(WeatherContextResolveRequest.self)
-        return try await manager.resolveWeather(payload, on: req.db)
-    }
+    static let iso8601Formatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        return formatter
+    }()
 }

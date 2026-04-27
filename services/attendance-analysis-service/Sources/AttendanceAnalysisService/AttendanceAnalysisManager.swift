@@ -151,6 +151,7 @@ private extension AttendanceAnalysisManager {
             userId: userId,
             day: day,
             workNormMinutes: workNormMinutes,
+            airAlertIntervals: externalContextResult.airAlertIntervals,
             trafficScore: externalContextResult.trafficScore,
             powerScore: externalContextResult.powerScore,
             weatherScore: externalContextResult.weatherScore,
@@ -365,6 +366,7 @@ private extension AttendanceAnalysisManager {
         userId: UUID,
         day: AttendanceDay,
         workNormMinutes: Int,
+        airAlertIntervals: [AirAlertInterval]?,
         trafficScore: Double?,
         powerScore: Double?,
         weatherScore: Double?,
@@ -403,6 +405,7 @@ private extension AttendanceAnalysisManager {
                         deficitHistoryDaysCount: 0,
                         calculationNotes: []
                     ),
+                    airAlertIntervals: nil,
                     trafficScore: nil,
                     powerScore: nil,
                     weatherScore: nil,
@@ -441,6 +444,7 @@ private extension AttendanceAnalysisManager {
                         deficitHistoryDaysCount: 0,
                         calculationNotes: ["target_day_technical_anomaly"]
                     ),
+                    airAlertIntervals: nil,
                     trafficScore: nil,
                     powerScore: nil,
                     weatherScore: nil,
@@ -480,6 +484,7 @@ private extension AttendanceAnalysisManager {
                             deficitHistoryDaysCount: 0,
                             calculationNotes: ["missing_first_entry_time_for_signal_stage"]
                         ),
+                        airAlertIntervals: nil,
                         trafficScore: nil,
                         powerScore: nil,
                         weatherScore: nil,
@@ -515,6 +520,7 @@ private extension AttendanceAnalysisManager {
                     from: outcome.details,
                     snapshot: calculation.snapshot,
                     debug: calculation.debug,
+                    airAlertIntervals: airAlertIntervals,
                     trafficScore: trafficScore,
                     powerScore: powerScore,
                     weatherScore: weatherScore,
@@ -554,6 +560,7 @@ private extension AttendanceAnalysisManager {
         from source: AttendanceAnalysisDebugDetails,
         snapshot: AttendanceCoreSignalCalculator.Snapshot,
         debug: AttendanceCoreSignalCalculator.Debug,
+        airAlertIntervals: [AirAlertInterval]?,
         trafficScore: Double?,
         powerScore: Double?,
         weatherScore: Double?,
@@ -580,6 +587,7 @@ private extension AttendanceAnalysisManager {
             zT: snapshot.zT,
             f: snapshot.f,
             calculationNotes: debug.calculationNotes.isEmpty ? nil : debug.calculationNotes,
+            airAlertIntervals: airAlertIntervals,
             trafficScore: trafficScore,
             powerScore: powerScore,
             weatherScore: weatherScore,
@@ -591,49 +599,74 @@ private extension AttendanceAnalysisManager {
     func resolveExternalContext(
         day: AttendanceDay,
         observation: AttendanceDayObservation?
-    ) async -> (trafficScore: Double?, powerScore: Double?, weatherScore: Double?, weatherContext: WeatherContextResolvedValue?, notes: [String]?) {
+    ) async -> (
+        airAlertIntervals: [AirAlertInterval]?,
+        trafficScore: Double?,
+        powerScore: Double?,
+        weatherScore: Double?,
+        weatherContext: WeatherContextResolvedValue?,
+        notes: [String]?
+    ) {
         guard let observation, let arrivalTime = observation.firstEntryTime else {
-            return (nil, nil, nil, nil, nil)
+            return (nil, nil, nil, nil, nil, nil)
         }
 
-        let resolvedTraffic = await resolveTrafficScore(day: day, arrivalTime: arrivalTime)
-        let resolvedPower = await resolvePowerScore(day: day, arrivalTime: arrivalTime)
-        let resolvedWeather = await resolveWeatherContext(day: day, arrivalTime: arrivalTime)
-        let notes = [resolvedTraffic.note, resolvedPower.note, resolvedWeather.note].compactMap { $0 }
+        do {
+            let response = try await externalContextClient.dayContext(day: day.stringValue, arrivalTime: arrivalTime)
+            let targetHour = arrivalHour(for: arrivalTime)
 
-        return (
-            resolvedTraffic.score,
-            resolvedPower.score,
-            resolvedWeather.score,
-            resolvedWeather.context,
-            notes.isEmpty ? nil : notes
-        )
+            let airAlertIntervals = response.contexts.first(where: { $0.factor == ExternalContextFactor.airAlerts.rawValue })?.intervals
+            let trafficScore = response.contexts
+                .first(where: { $0.factor == ExternalContextFactor.traffic.rawValue })?
+                .values?
+                .first(where: { $0.arrivalHour == targetHour })?
+                .score
+            let powerScore = response.contexts
+                .first(where: { $0.factor == ExternalContextFactor.powerAvailability.rawValue })?
+                .values?
+                .first(where: { $0.arrivalHour == targetHour })?
+                .score
+            let weatherContext = response.contexts
+                .first(where: { $0.factor == ExternalContextFactor.weather.rawValue })?
+                .values?
+                .first(where: { $0.arrivalHour == targetHour })?
+                .weather
+
+            let notes = [
+                airAlertIntervals == nil ? "air_alerts_context_unavailable" : nil,
+                trafficScore == nil ? "traffic_context_unavailable" : nil,
+                powerScore == nil ? "power_context_unavailable" : nil,
+                weatherContext == nil ? "weather_context_unavailable" : nil
+            ].compactMap { $0 }
+
+            return (
+                airAlertIntervals,
+                trafficScore,
+                powerScore,
+                weatherContext?.weatherScore,
+                weatherContext,
+                notes.isEmpty ? nil : notes
+            )
+        } catch {
+            return (
+                nil,
+                nil,
+                nil,
+                nil,
+                nil,
+                [
+                    "air_alerts_context_unavailable",
+                    "traffic_context_unavailable",
+                    "power_context_unavailable",
+                    "weather_context_unavailable"
+                ]
+            )
+        }
     }
 
-    func resolveTrafficScore(day: AttendanceDay, arrivalTime: Date) async -> (score: Double?, note: String?) {
-        do {
-            let response = try await externalContextClient.resolveTraffic(day: day.stringValue, arrivalTime: arrivalTime)
-            return (response.trafficScore, nil)
-        } catch {
-            return (nil, "traffic_context_unavailable")
-        }
-    }
-
-    func resolvePowerScore(day: AttendanceDay, arrivalTime: Date) async -> (score: Double?, note: String?) {
-        do {
-            let response = try await externalContextClient.resolvePower(day: day.stringValue, arrivalTime: arrivalTime)
-            return (response.powerScore, nil)
-        } catch {
-            return (nil, "power_context_unavailable")
-        }
-    }
-
-    func resolveWeatherContext(day: AttendanceDay, arrivalTime: Date) async -> (score: Double?, context: WeatherContextResolvedValue?, note: String?) {
-        do {
-            let response = try await externalContextClient.resolveWeather(day: day.stringValue, arrivalTime: arrivalTime)
-            return (response.weatherScore, response, nil)
-        } catch {
-            return (nil, nil, "weather_context_unavailable")
-        }
+    func arrivalHour(for arrivalTime: Date) -> Int {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? TimeZone(abbreviation: "UTC")!
+        return calendar.component(.hour, from: arrivalTime)
     }
 }

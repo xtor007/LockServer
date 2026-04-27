@@ -10,24 +10,31 @@ struct AttendanceExternalContextServiceClient {
         self.serviceClient = ServiceClient(client: client, baseURL: baseURL)
     }
 
-    func resolveTraffic(day: String, arrivalTime: Date) async throws -> TrafficContextResolvedValue {
-        try await serviceClient.post(
-            "/internal/external-context/traffic/resolve",
-            body: TrafficContextResolveRequest(day: day, arrivalTime: arrivalTime)
+    func dayContext(day: String, arrivalTime: Date) async throws -> ExternalContextDayResponse {
+        try await serviceClient.get(
+            "/internal/external-context/\(day)",
+            headers: internalHeaders,
+            query: ["arrivalTime": iso8601String(from: arrivalTime)],
+            as: ExternalContextDayResponse.self
         )
+    }
+}
+
+private extension AttendanceExternalContextServiceClient {
+    var internalHeaders: HTTPHeaders {
+        var headers = HTTPHeaders()
+        headers.replaceOrAdd(name: "X-LockServer-Internal-Service", value: "attendance-analysis")
+        return headers
     }
 
-    func resolvePower(day: String, arrivalTime: Date) async throws -> PowerContextResolvedValue {
-        try await serviceClient.post(
-            "/internal/external-context/power/resolve",
-            body: PowerContextResolveRequest(day: day, arrivalTime: arrivalTime)
-        )
+    func iso8601String(from date: Date) -> String {
+        Self.formatter.string(from: date)
     }
 
-    func resolveWeather(day: String, arrivalTime: Date) async throws -> WeatherContextResolvedValue {
-        try await serviceClient.post(
-            "/internal/external-context/weather/resolve",
-            body: WeatherContextResolveRequest(day: day, arrivalTime: arrivalTime)
-        )
-    }
+    static let formatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        return formatter
+    }()
 }

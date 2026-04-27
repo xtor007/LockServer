@@ -94,6 +94,7 @@ struct AttendanceAnalysisDebugDetails: Content, Codable, Equatable {
     let zT: Double?
     let f: Double?
     let calculationNotes: [String]?
+    let airAlertIntervals: [AirAlertInterval]?
     let trafficScore: Double?
     let powerScore: Double?
     let weatherScore: Double?
@@ -120,6 +121,7 @@ struct AttendanceAnalysisDebugDetails: Content, Codable, Equatable {
         zT: Double?,
         f: Double?,
         calculationNotes: [String]?,
+        airAlertIntervals: [AirAlertInterval]? = nil,
         trafficScore: Double? = nil,
         powerScore: Double? = nil,
         weatherScore: Double? = nil,
@@ -145,6 +147,7 @@ struct AttendanceAnalysisDebugDetails: Content, Codable, Equatable {
         self.zT = zT
         self.f = f
         self.calculationNotes = calculationNotes
+        self.airAlertIntervals = airAlertIntervals
         self.trafficScore = trafficScore
         self.powerScore = powerScore
         self.weatherScore = weatherScore

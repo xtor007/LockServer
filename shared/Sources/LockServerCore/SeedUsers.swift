@@ -181,7 +181,8 @@ public enum SeedUsers {
         attendanceSplitEntries +
         attendanceShortEntries +
         attendanceBrokenEntries +
-        attendanceCrossMidnightEntries
+        attendanceCrossMidnightEntries +
+        currentDayExternalContextMaterializationEntries
 
     private static func makeDate(_ value: String) -> Date {
         ISO8601DateFormatter().date(from: value)!
@@ -238,6 +239,14 @@ public enum SeedUsers {
 
     private static func timestamp(_ day: String, _ time: String) -> String {
         "\(day)T\(time):00Z"
+    }
+
+    private static func currentUTCDayString() -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: Date())
     }
 
     private static let userAccessEntries =
@@ -344,4 +353,12 @@ public enum SeedUsers {
         makeCrossMidnightSessionEntries(employerID: attendanceCrossMidnight.id, startDay: "2026-04-20", startTime: "22:10", endDay: "2026-04-21", endTime: "06:10") +
         makeCrossMidnightSessionEntries(employerID: attendanceCrossMidnight.id, startDay: "2026-04-21", startTime: "22:15", endDay: "2026-04-22", endTime: "06:15") +
         makeCrossMidnightSessionEntries(employerID: attendanceCrossMidnight.id, startDay: "2026-04-22", startTime: "22:30", endDay: "2026-04-23", endTime: "02:15")
+
+    private static let currentDayExternalContextMaterializationEntries: [SeedAccessEntry] = {
+        let day = currentUTCDayString()
+        guard !attendanceFixtureDays.contains(day) else {
+            return []
+        }
+        return makeSingleSessionEntries(employerID: admin.id, day: day, start: "08:32", end: "16:37")
+    }()
 }
