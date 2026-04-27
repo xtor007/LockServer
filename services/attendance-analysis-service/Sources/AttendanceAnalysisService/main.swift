@@ -22,7 +22,7 @@ do {
 if isFixtureMaterializationCommand {
     let summary = try await makeAttendanceFixtureMaterializer(app).materialize(on: app.db)
     print("Attendance fixture materialized for \(summary.regularUserCount) regular users across \(summary.fixtureDayCount) fixture days.")
-    print("Observations: \(summary.observationCount), results: \(summary.resultCount), signals_ready: \(summary.signalsReadyCount), external-context days: \(summary.contextDayCount).")
+    print("Observations: \(summary.observationCount), results: \(summary.resultCount), signals_ready: \(summary.signalReadyCount), clustered: \(summary.clusteredCount), technical_outliers: \(summary.technicalOutlierCount), model_version: \(summary.clusteringModelVersion ?? 0), external-context days: \(summary.contextDayCount).")
 } else {
     try await app.execute()
 }

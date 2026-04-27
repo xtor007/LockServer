@@ -365,7 +365,7 @@ These routes must be verified through the gateway. The underlying attendance-ana
 - `2025-06-05 ... 2026-04-24` are already materialized days
 - the fixed local fixture therefore contains `235` business days total and `232` persisted signal days per always-present user
 - regular-user norms include `240`, `360`, and `480` work minutes
-- `33333333-3333-3333-3333-333333333333` (`attendance.normal@lock.local`) on `2026-04-24`: stable office pattern, expected `signals_ready`, `historyDaysUsed = 3`, populated `Z_s`, `Z_t`, `F`, and full external context
+- `33333333-3333-3333-3333-333333333333` (`attendance.normal@lock.local`) on `2026-04-24`: stable office pattern, expected `clustering_terminal_stable_normal`, `historyDaysUsed = 3`, populated `Z_s`, `Z_t`, `F`, full external context, and a persisted cluster label
 - `44444444-4444-4444-4444-444444444444` (`attendance.split@lock.local`) on generated history: split schedule with repeated multi-session days and non-zero breaks
 - `55555555-5555-5555-5555-555555555555` (`attendance.short@lock.local`) on generated history: `360`-minute norm, repeated mild deficits, at least one persisted row with `F > 0`
 - `66666666-6666-6666-6666-666666666666` (`attendance.broken@lock.local`) on generated history: `240`-minute norm, early-shift pattern with first-entry hours before `08:00`
@@ -377,7 +377,7 @@ These routes must be verified through the gateway. The underlying attendance-ana
 - `GET /internal/attendance-analysis/users/:id/observations*` reads already persisted observation rows
 - local `./infrastructure/local/start-stack.sh` automatically materializes the full large attendance fixture on startup
 - rows also appear after one of the trigger endpoints has been executed for that user/day or for all users of that day
-- `GET /internal/attendance-analysis/users/:id/results` reads only persisted `signals_ready` rows and returns stored baseline/core-signal fields
+- `GET /internal/attendance-analysis/users/:id/results` reads persisted analyzed rows and returns baseline/core-signal fields together with clustering output
 
 ### Baseline Window
 
@@ -387,9 +387,59 @@ These routes must be verified through the gateway. The underlying attendance-ana
 ### Result Statuses
 
 - `signals_ready`: observation exists, enough valid history exists, baseline and `Z_s`/`Z_t`/`F` were persisted
+- `clustering_terminal_stable_normal`: the signal row was assigned to `Stable Normal` and analysis stops at clustering
+- `clustering_technical_outlier`: the point fell outside the trust radii of all clusters and was marked as a technical outlier
+- `ready_for_next_stage`: the row was clustered as `Flexible Normal`, `Episodic Deficit`, or `Systematic Anomaly` and is ready for the next analytical stage
 - `insufficient_history`: observation exists, but fewer than `N` previous valid days were materialized
 - `technical_anomaly`: target day was materialized as broken data and excluded from signal calculation
 - `not_ready`: no raw events were materialized for the requested day
+
+### Clustering Statuses
+
+- `not_started`: the row has `Z_s`, `Z_t`, `F`, but clustering has not been triggered yet
+- `not_applicable`: the row is not eligible for clustering because prior stages were not completed
+- `stable_normal_terminal`: the row was classified as `Stable Normal` and is terminal at clustering
+- `ready_for_next_stage`: the row was classified as a non-terminal behavioral cluster
+- `technical_outlier`: the row was treated as a clustering outlier and is terminal
+
+### `POST /internal/attendance-analysis/clustering/run`
+
+- Base URL:
+  - `http://127.0.0.1:8080`
+- Auth: Bearer auth token of admin
+- Headers:
+  - `Content-Type: application/json`
+- Body:
+
+```json
+{
+  "day": "2026-04-24",
+  "userId": "33333333-3333-3333-3333-333333333333"
+}
+```
+
+- Behavior:
+  - reuses the latest persisted clustering model
+  - clusters only rows in the requested scope whose `clusteringStatus` is still `not_started`
+
+### `POST /internal/attendance-analysis/clustering/rebuild`
+
+- Base URL:
+  - `http://127.0.0.1:8080`
+- Auth: Bearer auth token of admin
+- Headers:
+  - `Content-Type: application/json`
+- Body:
+
+```json
+{
+  "day": "2026-04-24"
+}
+```
+
+- Behavior:
+  - retrains and persists a new clustering model version from the existing signal-ready dataset
+  - reclusters the requested scope even if rows were already clustered before
 
 ### `POST /internal/attendance-analysis/observations/run`
 

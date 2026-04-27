@@ -16,6 +16,8 @@ struct AttendanceAnalysisController: RouteCollection {
         attendanceAnalysis.post("observations", "rebuild", use: rebuildObservation)
         attendanceAnalysis.post("observations", "run-all", use: runObservationsForAllUsers)
         attendanceAnalysis.post("observations", "rebuild-all", use: rebuildObservationsForAllUsers)
+        attendanceAnalysis.post("clustering", "run", use: runClustering)
+        attendanceAnalysis.post("clustering", "rebuild", use: rebuildClustering)
         attendanceAnalysis.get("users", ":id", "observations", use: getObservations)
         attendanceAnalysis.get("users", ":id", "observations", ":day", use: getObservation)
         attendanceAnalysis.get("users", ":id", "results", use: getResults)
@@ -55,6 +57,24 @@ struct AttendanceAnalysisController: RouteCollection {
         }
         let payload = try req.content.decode(AttendanceObservationBatchCommandRequest.self)
         return try await manager.runObservationsForAllUsers(dayString: payload.day, rebuild: true, context: context, on: req.db)
+    }
+
+    private func runClustering(req: Request) async throws -> AttendanceClusteringRunResponse {
+        let context = try await authClient.authenticatedContext(headers: req.headers)
+        guard context.isAdmin else {
+            throw Abort(.forbidden, reason: "Admin token required")
+        }
+        let payload = try req.content.decode(AttendanceClusteringCommandRequest.self)
+        return try await manager.runClustering(dayString: payload.day, userId: payload.userId, rebuild: false, on: req.db)
+    }
+
+    private func rebuildClustering(req: Request) async throws -> AttendanceClusteringRunResponse {
+        let context = try await authClient.authenticatedContext(headers: req.headers)
+        guard context.isAdmin else {
+            throw Abort(.forbidden, reason: "Admin token required")
+        }
+        let payload = try req.content.decode(AttendanceClusteringCommandRequest.self)
+        return try await manager.runClustering(dayString: payload.day, userId: payload.userId, rebuild: true, on: req.db)
     }
 
     private func getObservations(req: Request) async throws -> AttendanceDayObservationsResponse {

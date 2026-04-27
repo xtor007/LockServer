@@ -32,6 +32,13 @@ if [[ -z "$ADMIN_TOKEN" || "$ADMIN_TOKEN" == "null" ]]; then
 fi
 
 curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$GATEWAY_URL/internal/attendance-analysis/users/33333333-3333-3333-3333-333333333333/results" \
-  | jq -e '.results | length >= 200 and all(.status == "signals_ready")' >/dev/null
+  | jq -e '
+    .results
+    | length >= 200
+    and all(.clusterName != null)
+    and all(.clusterModelVersion != null)
+    and all(.clusterDistance != null)
+    and all(.clusteringStatus != null and .clusteringStatus != "not_started" and .clusteringStatus != "not_applicable")
+  ' >/dev/null
 
 echo "Attendance-analysis fixture is materialized."

@@ -9,12 +9,16 @@ struct AttendanceFixtureMaterializationSummary {
     let fixtureDayCount: Int
     let observationCount: Int
     let resultCount: Int
-    let signalsReadyCount: Int
+    let signalReadyCount: Int
+    let clusteredCount: Int
+    let technicalOutlierCount: Int
+    let clusteringModelVersion: Int?
     let contextDayCount: Int
 }
 
 struct AttendanceFixtureMaterializer {
     private let externalContextClient: AttendanceExternalContextServiceClient
+    private let clusteringService: AttendanceClusteringService
     private let builder = AttendanceObservationBuilder()
     private let signalCalculator: AttendanceCoreSignalCalculator
     private let baselineWindowDays: Int
@@ -22,9 +26,11 @@ struct AttendanceFixtureMaterializer {
 
     init(
         externalContextClient: AttendanceExternalContextServiceClient,
-        baselineWindowDays: Int
+        baselineWindowDays: Int,
+        clusteringService: AttendanceClusteringService
     ) {
         self.externalContextClient = externalContextClient
+        self.clusteringService = clusteringService
         self.baselineWindowDays = max(baselineWindowDays, 1)
         self.signalCalculator = AttendanceCoreSignalCalculator(baselineWindowDays: self.baselineWindowDays)
 
@@ -48,7 +54,7 @@ struct AttendanceFixtureMaterializer {
         var resultBatch = [AttendanceAnalysisResult]()
         var observationCount = 0
         var resultCount = 0
-        var signalsReadyCount = 0
+        var signalReadyCount = 0
 
         for user in users {
             let preparedLogs = preparedLogsByUser[user.id] ?? emptyPreparedLogs
@@ -75,7 +81,7 @@ struct AttendanceFixtureMaterializer {
                 resultBatch.append(result)
                 resultCount += 1
                 if result.status == AttendanceAnalysisStatus.signalsReady.rawValue {
-                    signalsReadyCount += 1
+                    signalReadyCount += 1
                 }
 
                 if let observation,
@@ -110,12 +116,17 @@ struct AttendanceFixtureMaterializer {
             try await resultBatch.create(on: database)
         }
 
+        let clusteringSummary = try await clusteringService.execute(scope: .allEligible, rebuildModel: true, on: database)
+
         return AttendanceFixtureMaterializationSummary(
             regularUserCount: users.count,
             fixtureDayCount: days.count,
             observationCount: observationCount,
             resultCount: resultCount,
-            signalsReadyCount: signalsReadyCount,
+            signalReadyCount: signalReadyCount,
+            clusteredCount: clusteringSummary.clusteredCount,
+            technicalOutlierCount: clusteringSummary.technicalOutlierCount,
+            clusteringModelVersion: clusteringSummary.modelVersion,
             contextDayCount: dayContexts.count
         )
     }
@@ -231,6 +242,12 @@ private extension AttendanceFixtureMaterializer {
             zS: draft.zS,
             zT: draft.zT,
             f: draft.f,
+            clusterName: draft.clusterName,
+            clusterScore: draft.clusterScore,
+            clusterWeight: draft.clusterWeight,
+            clusterModelVersion: draft.clusterModelVersion,
+            clusterDistance: draft.clusterDistance,
+            clusteringStatus: draft.clusteringStatus.rawValue,
             detailsJson: try encode(draft.details)
         )
     }
@@ -256,6 +273,12 @@ private extension AttendanceFixtureMaterializer {
                 zS: nil,
                 zT: nil,
                 f: nil,
+                clusterName: nil,
+                clusterScore: nil,
+                clusterWeight: nil,
+                clusterModelVersion: nil,
+                clusterDistance: nil,
+                clusteringStatus: .notApplicable,
                 details: makeDebugDetails(
                     from: outcome.details,
                     snapshot: AttendanceCoreSignalCalculator.Snapshot(
@@ -297,6 +320,12 @@ private extension AttendanceFixtureMaterializer {
                 zS: nil,
                 zT: nil,
                 f: nil,
+                clusterName: nil,
+                clusterScore: nil,
+                clusterWeight: nil,
+                clusterModelVersion: nil,
+                clusterDistance: nil,
+                clusteringStatus: .notApplicable,
                 details: makeDebugDetails(
                     from: outcome.details,
                     snapshot: AttendanceCoreSignalCalculator.Snapshot(
@@ -326,7 +355,7 @@ private extension AttendanceFixtureMaterializer {
                 )
             )
 
-        case .observationBuilt, .signalsReady, .insufficientHistory:
+        case .observationBuilt, .signalsReady, .insufficientHistory, .clusteringTerminalStableNormal, .clusteringTechnicalOutlier, .readyForNextStage:
             guard let observation, let firstEntryTime = observation.firstEntryTime else {
                 return AttendanceAnalysisResultDraft(
                     status: .notReady,
@@ -339,6 +368,12 @@ private extension AttendanceFixtureMaterializer {
                     zS: nil,
                     zT: nil,
                     f: nil,
+                    clusterName: nil,
+                    clusterScore: nil,
+                    clusterWeight: nil,
+                    clusterModelVersion: nil,
+                    clusterDistance: nil,
+                    clusteringStatus: .notApplicable,
                     details: makeDebugDetails(
                         from: outcome.details,
                         snapshot: AttendanceCoreSignalCalculator.Snapshot(
@@ -390,6 +425,12 @@ private extension AttendanceFixtureMaterializer {
                 zS: calculation.snapshot.zS,
                 zT: calculation.snapshot.zT,
                 f: calculation.snapshot.f,
+                clusterName: nil,
+                clusterScore: nil,
+                clusterWeight: nil,
+                clusterModelVersion: nil,
+                clusterDistance: nil,
+                clusteringStatus: calculation.status == .signalsReady ? .notStarted : .notApplicable,
                 details: makeDebugDetails(
                     from: outcome.details,
                     snapshot: calculation.snapshot,

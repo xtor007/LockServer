@@ -108,12 +108,19 @@ echo "Re-materializing attendance fixture..."
 echo "Checking sample attendance users..."
 for user_id in "$STABLE_USER_ID" "$SPLIT_USER_ID" "$SHORT_USER_ID" "$EARLY_USER_ID" "$NIGHT_USER_ID"; do
   curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$user_id/observations" | jq -e '.observations | length >= 200' >/dev/null
-  curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$user_id/results" | jq -e '.results | length >= 200 and all(.status == "signals_ready")' >/dev/null
+  curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$user_id/results" | jq -e '
+    .results
+    | length >= 200
+    and all(.clusterName != null)
+    and all(.clusterModelVersion != null)
+    and all(.clusterDistance != null)
+    and all(.clusteringStatus != null and .clusteringStatus != "not_started" and .clusteringStatus != "not_applicable")
+  ' >/dev/null
 done
 
 curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$STABLE_USER_ID/results" | jq -e \
   --arg day "$SAMPLE_DAY" \
-  'any(.results[]; .day == $day and .historyDaysUsed == 3 and .zS != null and .zT != null and .f != null and .detailsJson.airAlertIntervals != null and .detailsJson.trafficScore != null and .detailsJson.powerScore != null and .detailsJson.weatherScore != null and .detailsJson.weatherContext != null)' >/dev/null
+  'any(.results[]; .day == $day and .historyDaysUsed == 3 and .zS != null and .zT != null and .f != null and .clusterName != null and .clusterScore != null and .clusterModelVersion != null and .detailsJson.airAlertIntervals != null and .detailsJson.trafficScore != null and .detailsJson.powerScore != null and .detailsJson.weatherScore != null and .detailsJson.weatherContext != null)' >/dev/null
 
 curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$SPLIT_USER_ID/observations" | jq -e \
   'any(.observations[]; .sessionsCount > 1 and .breakMinutes > 0)' >/dev/null
@@ -133,9 +140,25 @@ curl -sS "${trusted_admin_headers[@]}" "$ACCESS_URL/internal/access/users/$NIGHT
 ' >/dev/null
 
 echo "Checking batch rebuild and access rules..."
+RUN_CLUSTERING_RESPONSE="$(curl -sS -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d "{\"userId\":\"$STABLE_USER_ID\",\"day\":\"$SAMPLE_DAY\"}" "$ATTENDANCE_GATEWAY_URL/clustering/run")"
+echo "$RUN_CLUSTERING_RESPONSE" | jq -e \
+  --arg day "$SAMPLE_DAY" \
+  '.day == $day and .processedCount == 1 and .clusteredCount == 0 and .skippedCount == 1 and .modelVersion >= 1 and (.items | length == 1) and .items[0].wasClustered == false' >/dev/null
+
 curl -sS -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d "{\"day\":\"$SAMPLE_DAY\"}" "$ATTENDANCE_GATEWAY_URL/observations/rebuild-all" | jq -e \
   --arg day "$SAMPLE_DAY" \
   '.day == $day and .processedCount >= 1000 and (.items | length >= 1000) and any(.items[]; .result.userId == "33333333-3333-3333-3333-333333333333" and .status == "signals_ready")' >/dev/null
+
+REBUILD_CLUSTERING_RESPONSE="$(curl -sS -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d "{\"day\":\"$SAMPLE_DAY\"}" "$ATTENDANCE_GATEWAY_URL/clustering/rebuild")"
+echo "$REBUILD_CLUSTERING_RESPONSE" | jq -e \
+  --arg day "$SAMPLE_DAY" \
+  '.day == $day and .processedCount >= 1000 and .clusteredCount >= 1 and .skippedCount >= 0 and .modelVersion >= 1 and (.items | length >= 1000) and any(.items[]; .userId == "33333333-3333-3333-3333-333333333333" and .wasClustered == true and .result.clusterName != null and .result.clusterModelVersion == .modelVersion)' >/dev/null
+
+curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$STABLE_USER_ID/results" | jq -e \
+  'any(.results[]; .clusterName == "Stable Normal" and .status == "clustering_terminal_stable_normal" and .clusteringStatus == "stable_normal_terminal")' >/dev/null
+
+curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$SHORT_USER_ID/results" | jq -e \
+  'any(.results[]; .clusterName != "Stable Normal" and .status == "ready_for_next_stage" and .clusteringStatus == "ready_for_next_stage")' >/dev/null
 
 curl -sS -H "Authorization: Bearer $STABLE_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$STABLE_USER_ID/observations/$SAMPLE_DAY" | jq -e '.workedMinutes > 0' >/dev/null
 curl -sS -H "Authorization: Bearer $SHORT_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$SHORT_USER_ID/results" | jq -e '.results | length >= 200' >/dev/null
@@ -143,6 +166,7 @@ curl -sS -H "Authorization: Bearer $NIGHT_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/
 [[ "$(curl -sS -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $STABLE_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$SPLIT_USER_ID/observations/$SAMPLE_DAY")" == "403" ]]
 [[ "$(curl -sS -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Bearer $STABLE_TOKEN" -H "Content-Type: application/json" -d "{\"userId\":\"$STABLE_USER_ID\",\"day\":\"$SAMPLE_DAY\"}" "$ATTENDANCE_GATEWAY_URL/observations/rebuild")" == "403" ]]
 [[ "$(curl -sS -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Bearer $STABLE_TOKEN" -H "Content-Type: application/json" -d "{\"day\":\"$SAMPLE_DAY\"}" "$ATTENDANCE_GATEWAY_URL/observations/rebuild-all")" == "403" ]]
+[[ "$(curl -sS -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Bearer $STABLE_TOKEN" -H "Content-Type: application/json" -d "{\"userId\":\"$STABLE_USER_ID\",\"day\":\"$SAMPLE_DAY\"}" "$ATTENDANCE_GATEWAY_URL/clustering/rebuild")" == "403" ]]
 [[ "$(curl -sS -o /dev/null -w "%{http_code}" "$ACCESS_URL/internal/access/users/$STABLE_USER_ID/logs")" == "401" ]]
 [[ "$(curl -sS -o /dev/null -w "%{http_code}" -H "X-Lock-User-Id: $STABLE_USER_ID" -H "X-Lock-User-Email: attendance.normal@lock.local" -H "X-Lock-User-Is-Admin: false" "$ACCESS_URL/internal/access/users/$SPLIT_USER_ID/logs")" == "403" ]]
 

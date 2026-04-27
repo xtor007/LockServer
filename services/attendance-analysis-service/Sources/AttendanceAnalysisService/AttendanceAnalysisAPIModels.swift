@@ -8,6 +8,17 @@ enum AttendanceAnalysisStatus: String, Codable {
     case technicalAnomaly = "technical_anomaly"
     case insufficientHistory = "insufficient_history"
     case notReady = "not_ready"
+    case clusteringTerminalStableNormal = "clustering_terminal_stable_normal"
+    case clusteringTechnicalOutlier = "clustering_technical_outlier"
+    case readyForNextStage = "ready_for_next_stage"
+}
+
+enum AttendanceClusteringStatus: String, Codable {
+    case notStarted = "not_started"
+    case notApplicable = "not_applicable"
+    case stableNormalTerminal = "stable_normal_terminal"
+    case readyForNextStage = "ready_for_next_stage"
+    case technicalOutlier = "technical_outlier"
 }
 
 struct AttendanceObservationCommandRequest: Content {
@@ -17,6 +28,11 @@ struct AttendanceObservationCommandRequest: Content {
 
 struct AttendanceObservationBatchCommandRequest: Content {
     let day: String
+}
+
+struct AttendanceClusteringCommandRequest: Content {
+    let day: String
+    let userId: UUID?
 }
 
 struct AttendanceObservationRunResponse: Content {
@@ -31,6 +47,26 @@ struct AttendanceObservationBatchResponse: Content {
     let processedCount: Int
     let wasRebuilt: Bool
     let items: [AttendanceObservationRunResponse]
+}
+
+struct AttendanceClusteringRunResponse: Content {
+    let day: String
+    let userId: UUID?
+    let processedCount: Int
+    let clusteredCount: Int
+    let skippedCount: Int
+    let wasRebuilt: Bool
+    let modelVersion: Int?
+    let items: [AttendanceClusteringRunItemResponse]
+}
+
+struct AttendanceClusteringRunItemResponse: Content {
+    let userId: UUID
+    let day: String
+    let status: String
+    let clusteringStatus: String?
+    let wasClustered: Bool
+    let result: AttendanceAnalysisResultResponse
 }
 
 struct AttendanceDayObservationsResponse: Content {
@@ -69,6 +105,12 @@ struct AttendanceAnalysisResultResponse: Content {
     let zS: Double?
     let zT: Double?
     let f: Double?
+    let clusterName: String?
+    let clusterScore: Double?
+    let clusterWeight: Double?
+    let clusterModelVersion: Int?
+    let clusterDistance: Double?
+    let clusteringStatus: String?
     let detailsJson: AttendanceAnalysisDebugDetails
     let createdAt: Date?
     let updatedAt: Date?
@@ -100,6 +142,13 @@ struct AttendanceAnalysisDebugDetails: Content, Codable, Equatable {
     let weatherScore: Double?
     let weatherContext: WeatherContextResolvedValue?
     let externalContextNotes: [String]?
+    let clusterName: String?
+    let clusterScore: Double?
+    let clusterWeight: Double?
+    let clusterModelVersion: Int?
+    let clusterDistance: Double?
+    let clusteringStatus: String?
+    let clusteringNotes: [String]?
 
     init(
         workNormMinutes: Int,
@@ -126,7 +175,14 @@ struct AttendanceAnalysisDebugDetails: Content, Codable, Equatable {
         powerScore: Double? = nil,
         weatherScore: Double? = nil,
         weatherContext: WeatherContextResolvedValue? = nil,
-        externalContextNotes: [String]? = nil
+        externalContextNotes: [String]? = nil,
+        clusterName: String? = nil,
+        clusterScore: Double? = nil,
+        clusterWeight: Double? = nil,
+        clusterModelVersion: Int? = nil,
+        clusterDistance: Double? = nil,
+        clusteringStatus: String? = nil,
+        clusteringNotes: [String]? = nil
     ) {
         self.workNormMinutes = workNormMinutes
         self.rawEventCount = rawEventCount
@@ -153,6 +209,13 @@ struct AttendanceAnalysisDebugDetails: Content, Codable, Equatable {
         self.weatherScore = weatherScore
         self.weatherContext = weatherContext
         self.externalContextNotes = externalContextNotes
+        self.clusterName = clusterName
+        self.clusterScore = clusterScore
+        self.clusterWeight = clusterWeight
+        self.clusterModelVersion = clusterModelVersion
+        self.clusterDistance = clusterDistance
+        self.clusteringStatus = clusteringStatus
+        self.clusteringNotes = clusteringNotes
     }
 }
 
@@ -203,5 +266,11 @@ struct AttendanceAnalysisResultDraft {
     let zS: Double?
     let zT: Double?
     let f: Double?
+    let clusterName: String?
+    let clusterScore: Double?
+    let clusterWeight: Double?
+    let clusterModelVersion: Int?
+    let clusterDistance: Double?
+    let clusteringStatus: AttendanceClusteringStatus
     let details: AttendanceAnalysisDebugDetails
 }

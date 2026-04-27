@@ -43,6 +43,24 @@ final class AttendanceAnalysisResult: Model, Content {
     @OptionalField(key: "f")
     var f: Double?
 
+    @OptionalField(key: "cluster_name")
+    var clusterName: String?
+
+    @OptionalField(key: "cluster_score")
+    var clusterScore: Double?
+
+    @OptionalField(key: "cluster_weight")
+    var clusterWeight: Double?
+
+    @OptionalField(key: "cluster_model_version")
+    var clusterModelVersion: Int?
+
+    @OptionalField(key: "cluster_distance")
+    var clusterDistance: Double?
+
+    @OptionalField(key: "clustering_status")
+    var clusteringStatus: String?
+
     @Field(key: "details_json")
     var detailsJson: String
 
@@ -68,6 +86,12 @@ final class AttendanceAnalysisResult: Model, Content {
         zS: Double?,
         zT: Double?,
         f: Double?,
+        clusterName: String? = nil,
+        clusterScore: Double? = nil,
+        clusterWeight: Double? = nil,
+        clusterModelVersion: Int? = nil,
+        clusterDistance: Double? = nil,
+        clusteringStatus: String? = nil,
         detailsJson: String
     ) {
         self.id = id ?? UUID()
@@ -83,6 +107,12 @@ final class AttendanceAnalysisResult: Model, Content {
         self.zS = zS
         self.zT = zT
         self.f = f
+        self.clusterName = clusterName
+        self.clusterScore = clusterScore
+        self.clusterWeight = clusterWeight
+        self.clusterModelVersion = clusterModelVersion
+        self.clusterDistance = clusterDistance
+        self.clusteringStatus = clusteringStatus
         self.detailsJson = detailsJson
     }
 }

@@ -11,6 +11,8 @@ func configure(_ app: Application) async throws {
     app.migrations.add(CreateAttendanceDayObservation())
     app.migrations.add(CreateAttendanceAnalysisResult())
     app.migrations.add(AddAttendanceAnalysisResultCoreSignals())
+    app.migrations.add(AddAttendanceAnalysisResultClusteringFields())
+    app.migrations.add(CreateAttendanceClusteringModelRecord())
     try await app.autoMigrate()
 
     let manager = try makeAttendanceAnalysisManager(app)
@@ -27,14 +29,16 @@ func makeAttendanceAnalysisManager(_ app: Application) throws -> AttendanceAnaly
         directoryClient: AttendanceDirectoryServiceClient(client: app.client, baseURL: try ServiceEndpoints.directoryBaseURL()),
         accessClient: AttendanceAccessServiceClient(client: app.client, baseURL: try ServiceEndpoints.accessBaseURL()),
         externalContextClient: AttendanceExternalContextServiceClient(client: app.client, baseURL: try ServiceEndpoints.externalContextBaseURL()),
-        baselineWindowDays: try attendanceBaselineWindowDays()
+        baselineWindowDays: try attendanceBaselineWindowDays(),
+        clusteringService: AttendanceClusteringService()
     )
 }
 
 func makeAttendanceFixtureMaterializer(_ app: Application) throws -> AttendanceFixtureMaterializer {
     AttendanceFixtureMaterializer(
         externalContextClient: AttendanceExternalContextServiceClient(client: app.client, baseURL: try ServiceEndpoints.externalContextBaseURL()),
-        baselineWindowDays: try attendanceBaselineWindowDays()
+        baselineWindowDays: try attendanceBaselineWindowDays(),
+        clusteringService: AttendanceClusteringService()
     )
 }
 

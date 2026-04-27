@@ -8,6 +8,7 @@ struct AttendanceAnalysisManager {
     private let directoryClient: AttendanceDirectoryServiceClient
     private let accessClient: AttendanceAccessServiceClient
     private let externalContextClient: AttendanceExternalContextServiceClient
+    private let clusteringService: AttendanceClusteringService
     private let builder = AttendanceObservationBuilder()
     private let signalCalculator: AttendanceCoreSignalCalculator
     private let baselineWindowDays: Int
@@ -18,11 +19,13 @@ struct AttendanceAnalysisManager {
         directoryClient: AttendanceDirectoryServiceClient,
         accessClient: AttendanceAccessServiceClient,
         externalContextClient: AttendanceExternalContextServiceClient,
-        baselineWindowDays: Int
+        baselineWindowDays: Int,
+        clusteringService: AttendanceClusteringService
     ) {
         self.directoryClient = directoryClient
         self.accessClient = accessClient
         self.externalContextClient = externalContextClient
+        self.clusteringService = clusteringService
         self.baselineWindowDays = max(baselineWindowDays, 1)
         self.signalCalculator = AttendanceCoreSignalCalculator(baselineWindowDays: self.baselineWindowDays)
 
@@ -99,6 +102,58 @@ struct AttendanceAnalysisManager {
             day: day.stringValue,
             processedCount: items.count,
             wasRebuilt: rebuild,
+            items: items
+        )
+    }
+
+    func runClustering(
+        dayString: String,
+        userId: UUID?,
+        rebuild: Bool,
+        on database: Database
+    ) async throws -> AttendanceClusteringRunResponse {
+        let day = try AttendanceDay(dayString)
+        let scope: AttendanceClusteringService.Scope = if let userId {
+            .userDay(userId, day)
+        } else {
+            .day(day)
+        }
+
+        let execution = try await clusteringService.execute(scope: scope, rebuildModel: rebuild, on: database)
+        let processedIds = Set(execution.processedResultIds)
+        let results = try await AttendanceAnalysisResult.query(on: database)
+            .filter(\.$day == day.startOfDay)
+            .sort(\.$userId, .ascending)
+            .all()
+            .filter { result in
+                processedIds.contains(result.id ?? UUID()) &&
+                    (userId == nil || result.userId == userId)
+            }
+
+        let resultResponses = try results.map(makeResultResponse)
+        let items = resultResponses.map { result in
+            AttendanceClusteringRunItemResponse(
+                userId: result.userId,
+                day: result.day,
+                status: result.status,
+                clusteringStatus: result.clusteringStatus,
+                wasClustered: result.id.map(execution.clusteredResultIds.contains) ?? false,
+                result: result
+            )
+        }
+
+        if userId != nil, items.isEmpty {
+            throw Abort(.notFound, reason: "Attendance analysis result not found for requested user and day")
+        }
+
+        return AttendanceClusteringRunResponse(
+            day: day.stringValue,
+            userId: userId,
+            processedCount: execution.processedCount,
+            clusteredCount: execution.clusteredCount,
+            skippedCount: execution.skippedCount,
+            wasRebuilt: rebuild,
+            modelVersion: execution.modelVersion,
             items: items
         )
     }
@@ -190,14 +245,23 @@ extension AttendanceAnalysisManager {
     func results(userId: UUID, on database: Database) async throws -> [AttendanceAnalysisResultResponse] {
         let results = try await AttendanceAnalysisResult.query(on: database)
             .filter(\.$userId == userId)
-            .filter(\.$status == AttendanceAnalysisStatus.signalsReady.rawValue)
             .sort(\.$day, .ascending)
             .all()
+            .filter { visibleResultStatuses.contains($0.status) }
         return try results.map(makeResultResponse)
     }
 }
 
 private extension AttendanceAnalysisManager {
+    var visibleResultStatuses: Set<String> {
+        [
+            AttendanceAnalysisStatus.signalsReady.rawValue,
+            AttendanceAnalysisStatus.clusteringTerminalStableNormal.rawValue,
+            AttendanceAnalysisStatus.clusteringTechnicalOutlier.rawValue,
+            AttendanceAnalysisStatus.readyForNextStage.rawValue
+        ]
+    }
+
     typealias StoredBundle = (observation: AttendanceDayObservationResponse?, result: AttendanceAnalysisResultResponse)
 
     func storedBundle(userId: UUID, day: AttendanceDay, on database: Database) async throws -> StoredBundle? {
@@ -283,6 +347,12 @@ private extension AttendanceAnalysisManager {
             existing.zS = draft.zS
             existing.zT = draft.zT
             existing.f = draft.f
+            existing.clusterName = draft.clusterName
+            existing.clusterScore = draft.clusterScore
+            existing.clusterWeight = draft.clusterWeight
+            existing.clusterModelVersion = draft.clusterModelVersion
+            existing.clusterDistance = draft.clusterDistance
+            existing.clusteringStatus = draft.clusteringStatus.rawValue
             existing.detailsJson = detailsJson
             try await existing.update(on: database)
             return existing
@@ -301,6 +371,12 @@ private extension AttendanceAnalysisManager {
             zS: draft.zS,
             zT: draft.zT,
             f: draft.f,
+            clusterName: draft.clusterName,
+            clusterScore: draft.clusterScore,
+            clusterWeight: draft.clusterWeight,
+            clusterModelVersion: draft.clusterModelVersion,
+            clusterDistance: draft.clusterDistance,
+            clusteringStatus: draft.clusteringStatus.rawValue,
             detailsJson: detailsJson
         )
         try await result.create(on: database)
@@ -352,6 +428,12 @@ private extension AttendanceAnalysisManager {
             zS: result.zS ?? details.zS,
             zT: result.zT ?? details.zT,
             f: result.f ?? details.f,
+            clusterName: result.clusterName ?? details.clusterName,
+            clusterScore: result.clusterScore ?? details.clusterScore,
+            clusterWeight: result.clusterWeight ?? details.clusterWeight,
+            clusterModelVersion: result.clusterModelVersion ?? details.clusterModelVersion,
+            clusterDistance: result.clusterDistance ?? details.clusterDistance,
+            clusteringStatus: result.clusteringStatus ?? details.clusteringStatus,
             detailsJson: details,
             createdAt: result.createdAt,
             updatedAt: result.updatedAt
@@ -387,6 +469,12 @@ private extension AttendanceAnalysisManager {
                 zS: nil,
                 zT: nil,
                 f: nil,
+                clusterName: nil,
+                clusterScore: nil,
+                clusterWeight: nil,
+                clusterModelVersion: nil,
+                clusterDistance: nil,
+                clusteringStatus: .notApplicable,
                 details: makeDebugDetails(
                     from: outcome.details,
                     snapshot: AttendanceCoreSignalCalculator.Snapshot(
@@ -426,6 +514,12 @@ private extension AttendanceAnalysisManager {
                 zS: nil,
                 zT: nil,
                 f: nil,
+                clusterName: nil,
+                clusterScore: nil,
+                clusterWeight: nil,
+                clusterModelVersion: nil,
+                clusterDistance: nil,
+                clusteringStatus: .notApplicable,
                 details: makeDebugDetails(
                     from: outcome.details,
                     snapshot: AttendanceCoreSignalCalculator.Snapshot(
@@ -453,7 +547,7 @@ private extension AttendanceAnalysisManager {
                 )
             )
 
-        case .observationBuilt, .signalsReady, .insufficientHistory:
+        case .observationBuilt, .signalsReady, .insufficientHistory, .clusteringTerminalStableNormal, .clusteringTechnicalOutlier, .readyForNextStage:
             guard let observation, let firstEntryTime = observation.firstEntryTime else {
                 return AttendanceAnalysisResultDraft(
                     status: .notReady,
@@ -466,6 +560,12 @@ private extension AttendanceAnalysisManager {
                     zS: nil,
                     zT: nil,
                     f: nil,
+                    clusterName: nil,
+                    clusterScore: nil,
+                    clusterWeight: nil,
+                    clusterModelVersion: nil,
+                    clusterDistance: nil,
+                    clusteringStatus: .notApplicable,
                     details: makeDebugDetails(
                         from: outcome.details,
                         snapshot: AttendanceCoreSignalCalculator.Snapshot(
@@ -516,6 +616,12 @@ private extension AttendanceAnalysisManager {
                 zS: calculation.snapshot.zS,
                 zT: calculation.snapshot.zT,
                 f: calculation.snapshot.f,
+                clusterName: nil,
+                clusterScore: nil,
+                clusterWeight: nil,
+                clusterModelVersion: nil,
+                clusterDistance: nil,
+                clusteringStatus: calculation.status == .signalsReady ? .notStarted : .notApplicable,
                 details: makeDebugDetails(
                     from: outcome.details,
                     snapshot: calculation.snapshot,
