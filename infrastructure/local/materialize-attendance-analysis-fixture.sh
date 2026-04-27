@@ -74,4 +74,12 @@ if ! curl -sS -X POST \
   echo "Warning: failed to materialize current power sample."
 fi
 
+if ! curl -sS -X POST \
+  -H "Content-Type: application/json" \
+  -d "{\"day\":\"$TODAY_UTC\",\"arrivalTime\":\"$TODAY_SAMPLE_ARRIVAL_TIME\"}" \
+  "$EXTERNAL_CONTEXT_URL/internal/external-context/weather/resolve" \
+  | jq -e 'has("weatherScore")' >/dev/null; then
+  echo "Warning: failed to materialize current weather sample."
+fi
+
 echo "Attendance-analysis fixture is materialized."

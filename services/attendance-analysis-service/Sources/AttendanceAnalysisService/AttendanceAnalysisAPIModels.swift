@@ -1,4 +1,5 @@
 import Foundation
+import LockServerContracts
 import Vapor
 
 enum AttendanceAnalysisStatus: String, Codable {
@@ -95,6 +96,8 @@ struct AttendanceAnalysisDebugDetails: Content, Codable, Equatable {
     let calculationNotes: [String]?
     let trafficScore: Double?
     let powerScore: Double?
+    let weatherScore: Double?
+    let weatherContext: WeatherContextResolvedValue?
     let externalContextNotes: [String]?
 
     init(
@@ -119,6 +122,8 @@ struct AttendanceAnalysisDebugDetails: Content, Codable, Equatable {
         calculationNotes: [String]?,
         trafficScore: Double? = nil,
         powerScore: Double? = nil,
+        weatherScore: Double? = nil,
+        weatherContext: WeatherContextResolvedValue? = nil,
         externalContextNotes: [String]? = nil
     ) {
         self.workNormMinutes = workNormMinutes
@@ -142,6 +147,8 @@ struct AttendanceAnalysisDebugDetails: Content, Codable, Equatable {
         self.calculationNotes = calculationNotes
         self.trafficScore = trafficScore
         self.powerScore = powerScore
+        self.weatherScore = weatherScore
+        self.weatherContext = weatherContext
         self.externalContextNotes = externalContextNotes
     }
 }

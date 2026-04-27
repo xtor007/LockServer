@@ -6,6 +6,7 @@ import Vapor
 struct ExternalContextManager {
     private let trafficProvider: PTVTrafficProviderClient?
     private let powerProvider: DTEKCityPowerProviderClient?
+    private let weatherProvider: OpenMeteoWeatherProviderClient?
     private let trafficFallbackMode: TrafficFallbackMode
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
@@ -13,10 +14,12 @@ struct ExternalContextManager {
     init(
         trafficProvider: PTVTrafficProviderClient?,
         powerProvider: DTEKCityPowerProviderClient?,
+        weatherProvider: OpenMeteoWeatherProviderClient?,
         trafficFallbackMode: TrafficFallbackMode
     ) {
         self.trafficProvider = trafficProvider
         self.powerProvider = powerProvider
+        self.weatherProvider = weatherProvider
         self.trafficFallbackMode = trafficFallbackMode
 
         let encoder = JSONEncoder()
@@ -173,6 +176,62 @@ extension ExternalContextManager {
 
         return resolvedValue
     }
+
+    func resolveWeather(_ request: WeatherContextResolveRequest, on database: Database) async throws -> WeatherContextResolvedValue {
+        let day = try ExternalContextDay(request.day)
+        let factor = ExternalContextFactor.weather
+        let city = weatherProviderCity
+        let bucketKey = hourBucketKey(for: request.arrivalTime)
+        let observationTime = request.arrivalTime.addingTimeInterval(-60 * 60)
+
+        let existing = try await findEntry(day: day, factor: factor, city: city, on: database)
+        let resolvedEnvelope = decodeWeatherResolvedEnvelope(existing?.resolvedValueJson)
+
+        if let resolvedValue = resolvedEnvelope.buckets[bucketKey] {
+            return resolvedValue
+        }
+
+        guard let weatherProvider else {
+            throw Abort(.serviceUnavailable, reason: "Open-Meteo weather provider is not configured")
+        }
+
+        let rawEnvelope = decodeWeatherRawEnvelope(existing?.rawPayloadJson)
+        let rawPayload: OpenMeteoWeatherRawPayload
+        let sourceURL: String
+        let fetchedAt: Date?
+
+        if let cachedPayload = rawEnvelope.payload, cachedPayload.day == day.stringValue {
+            rawPayload = cachedPayload
+            sourceURL = existing?.sourceURL ?? weatherDefaultSourceURL(for: day)
+            fetchedAt = nil
+        } else {
+            let fetchOutput = try await weatherProvider.fetchWeather(for: day)
+            rawPayload = fetchOutput.rawPayload
+            sourceURL = fetchOutput.sourceURL
+            fetchedAt = Date()
+        }
+
+        guard let sourceSnapshot = weatherSnapshot(from: rawPayload, for: observationTime) else {
+            throw Abort(.badGateway, reason: "Open-Meteo weather response does not contain requested hour-before-arrival bucket")
+        }
+        let sourceAggregate = WeatherContextAggregator.makeSourceAggregate(snapshot: sourceSnapshot)
+        let resolvedValue = WeatherContextAggregator.makeResolvedValue(sourceAggregate: sourceAggregate)
+
+        _ = try await upsertWeatherEntry(
+            existing: existing,
+            day: day,
+            city: city,
+            rawPayload: rawPayload,
+            sourceURL: sourceURL,
+            bucketKey: bucketKey,
+            sourceAggregate: sourceAggregate,
+            resolvedValue: resolvedValue,
+            fetchedAt: fetchedAt,
+            on: database
+        )
+
+        return resolvedValue
+    }
 }
 
 private extension ExternalContextManager {
@@ -212,6 +271,14 @@ private extension ExternalContextManager {
         DTEKCityPowerConfiguration.kyivDefault.maxSignalAgeHours
     }
 
+    var weatherSourceName: String {
+        OpenMeteoWeatherConfiguration.kyivDefault.sourceName
+    }
+
+    var weatherProviderCity: String {
+        OpenMeteoWeatherConfiguration.kyivDefault.city
+    }
+
     struct TrafficRawPayloadEnvelope: Codable {
         var buckets: [String: TrafficSourceAggregate]
     }
@@ -234,6 +301,18 @@ private extension ExternalContextManager {
 
     struct PowerResolvedPayloadEnvelope: Codable {
         var buckets: [String: PowerContextResolvedValue]
+    }
+
+    struct WeatherRawPayloadEnvelope: Codable {
+        var payload: OpenMeteoWeatherRawPayload?
+    }
+
+    struct WeatherParsedPayloadEnvelope: Codable {
+        var buckets: [String: WeatherSourceAggregate]
+    }
+
+    struct WeatherResolvedPayloadEnvelope: Codable {
+        var buckets: [String: WeatherContextResolvedValue]
     }
 
     func findEntry(day: ExternalContextDay, factor: ExternalContextFactor, on database: Database) async throws -> ExternalContextCache? {
@@ -357,10 +436,63 @@ private extension ExternalContextManager {
         return entry
     }
 
+    func upsertWeatherEntry(
+        existing: ExternalContextCache?,
+        day: ExternalContextDay,
+        city: String,
+        rawPayload: OpenMeteoWeatherRawPayload,
+        sourceURL: String,
+        bucketKey: String,
+        sourceAggregate: WeatherSourceAggregate,
+        resolvedValue: WeatherContextResolvedValue,
+        fetchedAt: Date?,
+        on database: Database
+    ) async throws -> ExternalContextCache {
+        let rawEnvelope = WeatherRawPayloadEnvelope(payload: rawPayload)
+        var parsedEnvelope = decodeWeatherParsedEnvelope(existing?.parsedPayloadJson)
+        var resolvedEnvelope = decodeWeatherResolvedEnvelope(existing?.resolvedValueJson)
+
+        parsedEnvelope.buckets[bucketKey] = sourceAggregate
+        resolvedEnvelope.buckets[bucketKey] = resolvedValue
+
+        let rawPayloadJson = try encode(rawEnvelope)
+        let parsedPayloadJson = try encode(parsedEnvelope)
+        let resolvedValueJson = try encode(resolvedEnvelope)
+
+        if let existing {
+            existing.sourceName = weatherSourceName
+            existing.sourceURL = sourceURL
+            existing.fetchStatus = ExternalContextFetchStatus.fetched.rawValue
+            existing.rawPayloadJson = rawPayloadJson
+            existing.parsedPayloadJson = parsedPayloadJson
+            existing.resolvedValueJson = resolvedValueJson
+            existing.sourceUpdatedAt = rawPayload.sourceUpdatedAt
+            existing.fetchedAt = fetchedAt ?? existing.fetchedAt
+            try await existing.update(on: database)
+            return existing
+        }
+
+        let entry = ExternalContextCache(
+            factor: ExternalContextFactor.weather.rawValue,
+            day: day.startOfDay,
+            city: city,
+            sourceName: weatherSourceName,
+            sourceURL: sourceURL,
+            fetchStatus: ExternalContextFetchStatus.fetched.rawValue,
+            rawPayloadJson: rawPayloadJson,
+            parsedPayloadJson: parsedPayloadJson,
+            resolvedValueJson: resolvedValueJson,
+            sourceUpdatedAt: rawPayload.sourceUpdatedAt,
+            fetchedAt: fetchedAt
+        )
+        try await entry.create(on: database)
+        return entry
+    }
+
     func makeDayFactorResponse(_ entry: ExternalContextCache) -> ExternalContextDayFactorResponse {
         ExternalContextDayFactorResponse(
             factor: entry.factor,
-            values: makeHourScores(from: entry.factor, json: entry.resolvedValueJson)
+            values: makeHourValues(from: entry.factor, json: entry.resolvedValueJson)
         )
     }
 
@@ -368,7 +500,7 @@ private extension ExternalContextManager {
         ExternalContextFactorResponse(
             day: ExternalContextDay(date: entry.day).stringValue,
             factor: entry.factor,
-            values: makeHourScores(from: entry.factor, json: entry.resolvedValueJson)
+            values: makeHourValues(from: entry.factor, json: entry.resolvedValueJson)
         )
     }
 
@@ -403,6 +535,32 @@ private extension ExternalContextManager {
         decodeEnvelope(json, default: PowerResolvedPayloadEnvelope(buckets: [:]))
     }
 
+    func decodeWeatherRawEnvelope(_ json: String?) -> WeatherRawPayloadEnvelope {
+        decodeEnvelope(json, default: WeatherRawPayloadEnvelope(payload: nil))
+    }
+
+    func decodeWeatherParsedEnvelope(_ json: String?) -> WeatherParsedPayloadEnvelope {
+        decodeEnvelope(json, default: WeatherParsedPayloadEnvelope(buckets: [:]))
+    }
+
+    func decodeWeatherResolvedEnvelope(_ json: String?) -> WeatherResolvedPayloadEnvelope {
+        decodeEnvelope(json, default: WeatherResolvedPayloadEnvelope(buckets: [:]))
+    }
+
+    func weatherDefaultSourceURL(for day: ExternalContextDay) -> String {
+        if day == ExternalContextDay(date: Date()) {
+            return OpenMeteoWeatherConfiguration.kyivDefault.forecastSourceURL
+        }
+        return OpenMeteoWeatherConfiguration.kyivDefault.historicalSourceURL
+    }
+
+    func weatherSnapshot(from rawPayload: OpenMeteoWeatherRawPayload, for observationTime: Date) -> OpenMeteoWeatherHourSnapshot? {
+        let observationBucketKey = hourBucketKey(for: observationTime)
+        return rawPayload.snapshots.first {
+            hourBucketKey(for: $0.time) == observationBucketKey
+        }
+    }
+
     func decodeEnvelope<T: Decodable>(_ json: String?, default defaultValue: T) -> T {
         guard let json else {
             return defaultValue
@@ -418,7 +576,7 @@ private extension ExternalContextManager {
         return string
     }
 
-    func makeHourScores(from factorString: String, json: String?) -> [ExternalContextHourScore] {
+    func makeHourValues(from factorString: String, json: String?) -> [ExternalContextHourValue] {
         guard let factor = ExternalContextFactor(rawValue: factorString) else {
             return []
         }
@@ -430,7 +588,7 @@ private extension ExternalContextManager {
                 guard let value = resolvedEnvelope.buckets[key], let arrivalHour = Int(key) else {
                     return nil
                 }
-                return ExternalContextHourScore(arrivalHour: arrivalHour, score: value.trafficScore)
+                return ExternalContextHourValue(arrivalHour: arrivalHour, score: value.trafficScore)
             }
         case .powerAvailability:
             let resolvedEnvelope = decodePowerResolvedEnvelope(json)
@@ -438,9 +596,17 @@ private extension ExternalContextManager {
                 guard let value = resolvedEnvelope.buckets[key], let arrivalHour = Int(key) else {
                     return nil
                 }
-                return ExternalContextHourScore(arrivalHour: arrivalHour, score: value.powerScore)
+                return ExternalContextHourValue(arrivalHour: arrivalHour, score: value.powerScore)
             }
-        case .airAlerts, .weather:
+        case .weather:
+            let resolvedEnvelope = decodeWeatherResolvedEnvelope(json)
+            return resolvedEnvelope.buckets.keys.sorted().compactMap { key in
+                guard let value = resolvedEnvelope.buckets[key], let arrivalHour = Int(key) else {
+                    return nil
+                }
+                return ExternalContextHourValue(arrivalHour: arrivalHour, score: value.weatherScore, weather: value)
+            }
+        case .airAlerts:
             return []
         }
     }

@@ -26,9 +26,9 @@ public struct ExternalContextDayResponse: Content, Codable, Equatable {
 
 public struct ExternalContextDayFactorResponse: Content, Codable, Equatable {
     public let factor: String
-    public let values: [ExternalContextHourScore]
+    public let values: [ExternalContextHourValue]
 
-    public init(factor: String, values: [ExternalContextHourScore]) {
+    public init(factor: String, values: [ExternalContextHourValue]) {
         self.factor = factor
         self.values = values
     }
@@ -37,9 +37,9 @@ public struct ExternalContextDayFactorResponse: Content, Codable, Equatable {
 public struct ExternalContextFactorResponse: Content, Codable, Equatable {
     public let day: String
     public let factor: String
-    public let values: [ExternalContextHourScore]
+    public let values: [ExternalContextHourValue]
 
-    public init(day: String, factor: String, values: [ExternalContextHourScore]) {
+    public init(day: String, factor: String, values: [ExternalContextHourValue]) {
         self.day = day
         self.factor = factor
         self.values = values
@@ -66,18 +66,31 @@ public struct PowerContextResolveRequest: Content, Codable, Equatable {
     }
 }
 
-public struct ExternalContextHourScore: Content, Codable, Equatable {
+public struct WeatherContextResolveRequest: Content, Codable, Equatable {
+    public let day: String
+    public let arrivalTime: Date
+
+    public init(day: String, arrivalTime: Date) {
+        self.day = day
+        self.arrivalTime = arrivalTime
+    }
+}
+
+public struct ExternalContextHourValue: Content, Codable, Equatable {
     public let arrivalHour: Int
     public let score: Double?
+    public let weather: WeatherContextResolvedValue?
 
-    public init(arrivalHour: Int, score: Double?) {
+    public init(arrivalHour: Int, score: Double?, weather: WeatherContextResolvedValue? = nil) {
         self.arrivalHour = arrivalHour
         self.score = score
+        self.weather = weather
     }
 
     enum CodingKeys: String, CodingKey {
         case arrivalHour
         case score
+        case weather
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -87,6 +100,9 @@ public struct ExternalContextHourScore: Content, Codable, Equatable {
             try container.encode(score, forKey: .score)
         } else {
             try container.encodeNil(forKey: .score)
+        }
+        if let weather {
+            try container.encode(weather, forKey: .weather)
         }
     }
 }
@@ -117,5 +133,24 @@ public struct PowerContextResolvedValue: Content, Codable, Equatable {
         } else {
             try container.encodeNil(forKey: .powerScore)
         }
+    }
+}
+
+public struct WeatherContextResolvedValue: Content, Codable, Equatable {
+    public let weatherScore: Double
+    public let precipitation: Double?
+    public let isIcy: Bool
+    public let visibility: Double?
+
+    public init(
+        weatherScore: Double,
+        precipitation: Double?,
+        isIcy: Bool,
+        visibility: Double?
+    ) {
+        self.weatherScore = weatherScore
+        self.precipitation = precipitation
+        self.isIcy = isIcy
+        self.visibility = visibility
     }
 }

@@ -16,6 +16,7 @@ struct ExternalContextController: RouteCollection {
         externalContext.get(":day", ":factor", use: getContextForFactor)
         externalContext.post("traffic", "resolve", use: resolveTraffic)
         externalContext.post("power", "resolve", use: resolvePower)
+        externalContext.post("weather", "resolve", use: resolveWeather)
     }
 
     private func getContextsForDay(req: Request) async throws -> ExternalContextDayResponse {
@@ -45,5 +46,10 @@ struct ExternalContextController: RouteCollection {
     private func resolvePower(req: Request) async throws -> PowerContextResolvedValue {
         let payload = try req.content.decode(PowerContextResolveRequest.self)
         return try await manager.resolvePower(payload, on: req.db)
+    }
+
+    private func resolveWeather(req: Request) async throws -> WeatherContextResolvedValue {
+        let payload = try req.content.decode(WeatherContextResolveRequest.self)
+        return try await manager.resolveWeather(payload, on: req.db)
     }
 }

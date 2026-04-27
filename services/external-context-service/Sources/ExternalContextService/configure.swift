@@ -19,6 +19,9 @@ func configure(_ app: Application) async throws {
     let powerMode = try EnvironmentValue.string("LOCKSERVER_EXTERNAL_CONTEXT_POWER_MODE", default: "official_channel")
         .trimmingCharacters(in: .whitespacesAndNewlines)
         .lowercased()
+    let weatherMode = try EnvironmentValue.string("LOCKSERVER_EXTERNAL_CONTEXT_WEATHER_MODE", default: "enabled")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
     let manager = ExternalContextManager(
         trafficProvider: trafficProvider.isEmpty
             ? nil
@@ -26,6 +29,9 @@ func configure(_ app: Application) async throws {
         powerProvider: powerMode == "disabled"
             ? nil
             : DTEKCityPowerProviderClient(client: app.client, configuration: .kyivDefault),
+        weatherProvider: weatherMode == "disabled"
+            ? nil
+            : OpenMeteoWeatherProviderClient(client: app.client, configuration: .kyivDefault),
         trafficFallbackMode: trafficFallbackMode == "fixture_when_unavailable"
             ? .fixtureWhenUnavailable
             : .disabled

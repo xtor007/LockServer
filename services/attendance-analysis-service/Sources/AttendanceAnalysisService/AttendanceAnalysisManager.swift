@@ -153,6 +153,8 @@ private extension AttendanceAnalysisManager {
             workNormMinutes: workNormMinutes,
             trafficScore: externalContextResult.trafficScore,
             powerScore: externalContextResult.powerScore,
+            weatherScore: externalContextResult.weatherScore,
+            weatherContext: externalContextResult.weatherContext,
             externalContextNotes: externalContextResult.notes,
             on: database
         )
@@ -365,6 +367,8 @@ private extension AttendanceAnalysisManager {
         workNormMinutes: Int,
         trafficScore: Double?,
         powerScore: Double?,
+        weatherScore: Double?,
+        weatherContext: WeatherContextResolvedValue?,
         externalContextNotes: [String]?,
         on database: Database
     ) async throws -> AttendanceAnalysisResultDraft {
@@ -401,6 +405,8 @@ private extension AttendanceAnalysisManager {
                     ),
                     trafficScore: nil,
                     powerScore: nil,
+                    weatherScore: nil,
+                    weatherContext: nil,
                     externalContextNotes: nil
                 )
             )
@@ -437,6 +443,8 @@ private extension AttendanceAnalysisManager {
                     ),
                     trafficScore: nil,
                     powerScore: nil,
+                    weatherScore: nil,
+                    weatherContext: nil,
                     externalContextNotes: nil
                 )
             )
@@ -474,6 +482,8 @@ private extension AttendanceAnalysisManager {
                         ),
                         trafficScore: nil,
                         powerScore: nil,
+                        weatherScore: nil,
+                        weatherContext: nil,
                         externalContextNotes: nil
                     )
                 )
@@ -507,6 +517,8 @@ private extension AttendanceAnalysisManager {
                     debug: calculation.debug,
                     trafficScore: trafficScore,
                     powerScore: powerScore,
+                    weatherScore: weatherScore,
+                    weatherContext: weatherContext,
                     externalContextNotes: externalContextNotes
                 )
             )
@@ -544,6 +556,8 @@ private extension AttendanceAnalysisManager {
         debug: AttendanceCoreSignalCalculator.Debug,
         trafficScore: Double?,
         powerScore: Double?,
+        weatherScore: Double?,
+        weatherContext: WeatherContextResolvedValue?,
         externalContextNotes: [String]?
     ) -> AttendanceAnalysisDebugDetails {
         AttendanceAnalysisDebugDetails(
@@ -568,6 +582,8 @@ private extension AttendanceAnalysisManager {
             calculationNotes: debug.calculationNotes.isEmpty ? nil : debug.calculationNotes,
             trafficScore: trafficScore,
             powerScore: powerScore,
+            weatherScore: weatherScore,
+            weatherContext: weatherContext,
             externalContextNotes: externalContextNotes
         )
     }
@@ -575,18 +591,21 @@ private extension AttendanceAnalysisManager {
     func resolveExternalContext(
         day: AttendanceDay,
         observation: AttendanceDayObservation?
-    ) async -> (trafficScore: Double?, powerScore: Double?, notes: [String]?) {
+    ) async -> (trafficScore: Double?, powerScore: Double?, weatherScore: Double?, weatherContext: WeatherContextResolvedValue?, notes: [String]?) {
         guard let observation, let arrivalTime = observation.firstEntryTime else {
-            return (nil, nil, nil)
+            return (nil, nil, nil, nil, nil)
         }
 
         let resolvedTraffic = await resolveTrafficScore(day: day, arrivalTime: arrivalTime)
         let resolvedPower = await resolvePowerScore(day: day, arrivalTime: arrivalTime)
-        let notes = [resolvedTraffic.note, resolvedPower.note].compactMap { $0 }
+        let resolvedWeather = await resolveWeatherContext(day: day, arrivalTime: arrivalTime)
+        let notes = [resolvedTraffic.note, resolvedPower.note, resolvedWeather.note].compactMap { $0 }
 
         return (
             resolvedTraffic.score,
             resolvedPower.score,
+            resolvedWeather.score,
+            resolvedWeather.context,
             notes.isEmpty ? nil : notes
         )
     }
@@ -606,6 +625,15 @@ private extension AttendanceAnalysisManager {
             return (response.powerScore, nil)
         } catch {
             return (nil, "power_context_unavailable")
+        }
+    }
+
+    func resolveWeatherContext(day: AttendanceDay, arrivalTime: Date) async -> (score: Double?, context: WeatherContextResolvedValue?, note: String?) {
+        do {
+            let response = try await externalContextClient.resolveWeather(day: day.stringValue, arrivalTime: arrivalTime)
+            return (response.weatherScore, response, nil)
+        } catch {
+            return (nil, nil, "weather_context_unavailable")
         }
     }
 }

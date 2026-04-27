@@ -23,4 +23,11 @@ struct AttendanceExternalContextServiceClient {
             body: PowerContextResolveRequest(day: day, arrivalTime: arrivalTime)
         )
     }
+
+    func resolveWeather(day: String, arrivalTime: Date) async throws -> WeatherContextResolvedValue {
+        try await serviceClient.post(
+            "/internal/external-context/weather/resolve",
+            body: WeatherContextResolveRequest(day: day, arrivalTime: arrivalTime)
+        )
+    }
 }
