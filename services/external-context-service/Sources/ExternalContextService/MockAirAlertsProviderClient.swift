@@ -1,42 +1,64 @@
 import Foundation
 import LockServerContracts
 
-struct MockAirAlertsRawPayload: Codable, Equatable {
-    let day: String
-    let city: String
-    let generatedAt: Date
-    let intervals: [AirAlertInterval]
-}
-
-struct MockAirAlertsProviderFetchOutput: Equatable {
-    let rawPayload: MockAirAlertsRawPayload
-    let sourceURL: String
-}
-
-struct MockAirAlertsProviderClient {
+struct MockAirAlertsProviderClient: AirAlertsProvider {
     private let configuration: MockAirAlertsConfiguration
+
+    var city: String {
+        configuration.city
+    }
+
+    var sourceName: String {
+        configuration.sourceName
+    }
+
+    var sourceURL: String {
+        configuration.sourceURL
+    }
 
     init(configuration: MockAirAlertsConfiguration) {
         self.configuration = configuration
     }
 
-    func fetchAirAlerts(for day: ExternalContextDay) async throws -> MockAirAlertsProviderFetchOutput {
-        let intervals = generateIntervals(for: day)
-        let generatedAt = intervals.last?.endedAt ?? day.startOfDay
+    func supports(day _: ExternalContextDay) -> Bool {
+        true
+    }
 
-        return MockAirAlertsProviderFetchOutput(
-            rawPayload: MockAirAlertsRawPayload(
+    func fetchAirAlerts(for day: ExternalContextDay) async throws -> AirAlertsProviderFetchOutput {
+        let intervals = generateIntervals(for: day)
+        let sourceUpdatedAt = intervals.last?.endedAt ?? day.startOfDay
+
+        return AirAlertsProviderFetchOutput(
+            rawPayload: AirAlertsRawPayload(
                 day: day.stringValue,
                 city: configuration.city,
-                generatedAt: generatedAt,
-                intervals: intervals
+                sourceKind: configuration.sourceName,
+                sourceUpdatedAt: sourceUpdatedAt,
+                alerts: makeAlerts(from: intervals, day: day)
             ),
+            sourceName: configuration.sourceName,
             sourceURL: configuration.sourceURL
         )
     }
 }
 
 private extension MockAirAlertsProviderClient {
+    func makeAlerts(from intervals: [AirAlertInterval], day: ExternalContextDay) -> [AirAlertsRawAlert] {
+        intervals.enumerated().map { index, interval in
+            AirAlertsRawAlert(
+                id: "\(configuration.city)-\(day.stringValue)-\(index)",
+                locationTitle: configuration.city,
+                locationUID: nil,
+                alertType: "air_raid",
+                startedAt: interval.startedAt,
+                finishedAt: interval.endedAt,
+                updatedAt: interval.endedAt,
+                notes: nil,
+                calculated: false
+            )
+        }
+    }
+
     struct SeededGenerator: RandomNumberGenerator {
         private var state: UInt64
 

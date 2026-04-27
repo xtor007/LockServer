@@ -4,7 +4,8 @@ import LockServerContracts
 import Vapor
 
 struct ExternalContextManager {
-    private let airAlertsProvider: MockAirAlertsProviderClient?
+    private let airAlertsProvider: (any AirAlertsProvider)?
+    private let airAlertsFallbackProvider: (any AirAlertsProvider)?
     private let trafficProvider: PTVTrafficProviderClient?
     private let powerProvider: DTEKCityPowerProviderClient?
     private let weatherProvider: OpenMeteoWeatherProviderClient?
@@ -15,7 +16,8 @@ struct ExternalContextManager {
     private let decoder: JSONDecoder
 
     init(
-        airAlertsProvider: MockAirAlertsProviderClient?,
+        airAlertsProvider: (any AirAlertsProvider)?,
+        airAlertsFallbackProvider: (any AirAlertsProvider)?,
         trafficProvider: PTVTrafficProviderClient?,
         powerProvider: DTEKCityPowerProviderClient?,
         weatherProvider: OpenMeteoWeatherProviderClient?,
@@ -24,6 +26,7 @@ struct ExternalContextManager {
         weatherFallbackEnabled: Bool
     ) {
         self.airAlertsProvider = airAlertsProvider
+        self.airAlertsFallbackProvider = airAlertsFallbackProvider
         self.trafficProvider = trafficProvider
         self.powerProvider = powerProvider
         self.weatherProvider = weatherProvider
@@ -82,42 +85,48 @@ extension ExternalContextManager {
 
     func resolveAirAlerts(day: ExternalContextDay, on database: Database) async throws -> AirAlertsContextResolvedValue {
         let factor = ExternalContextFactor.airAlerts
-        let city = airAlertsProviderCity
+        let provider = preferredAirAlertsProvider(for: day)
+        let city = provider?.city ?? airAlertsProviderCity
 
         let existing = try await findEntry(day: day, factor: factor, city: city, on: database)
+        let rawEnvelope = decodeAirAlertsRawEnvelope(existing?.rawPayloadJson)
         let resolvedEnvelope = decodeAirAlertsResolvedEnvelope(existing?.resolvedValueJson)
 
-        if let resolvedValue = resolvedEnvelope.value {
+        if shouldTrustCachedAirAlertsResolvedValue(day: day, existing: existing, provider: provider), let resolvedValue = resolvedEnvelope.value {
             return resolvedValue
         }
 
-        guard let airAlertsProvider else {
-            throw Abort(.serviceUnavailable, reason: "Mock air-alerts provider is not configured")
-        }
-
-        let rawEnvelope = decodeAirAlertsRawEnvelope(existing?.rawPayloadJson)
-        let rawPayload: MockAirAlertsRawPayload
+        let rawPayload: AirAlertsRawPayload
+        let sourceName: String
         let sourceURL: String
         let fetchedAt: Date?
 
-        if let cachedPayload = rawEnvelope.payload, cachedPayload.day == day.stringValue {
+        if let cachedPayload = rawEnvelope.payload,
+           cachedPayload.day == day.stringValue,
+           shouldRefetchAirAlerts(day: day, existing: existing, provider: provider) == false {
             rawPayload = cachedPayload
-            sourceURL = existing?.sourceURL ?? airAlertsSourceURL
+            sourceName = existing?.sourceName ?? airAlertsFallbackSourceName
+            sourceURL = existing?.sourceURL ?? airAlertsFallbackSourceURL
             fetchedAt = nil
         } else {
-            let fetchOutput = try await airAlertsProvider.fetchAirAlerts(for: day)
+            guard let provider else {
+                throw Abort(.serviceUnavailable, reason: "Air-alerts provider is not configured")
+            }
+            let fetchOutput = try await provider.fetchAirAlerts(for: day)
             rawPayload = fetchOutput.rawPayload
+            sourceName = fetchOutput.sourceName
             sourceURL = fetchOutput.sourceURL
             fetchedAt = Date()
         }
 
-        let sourceAggregate = AirAlertsContextAggregator.makeSourceAggregate(rawPayload: rawPayload)
+        let sourceAggregate = AirAlertsContextAggregator.makeSourceAggregate(day: day, rawPayload: rawPayload)
         let resolvedValue = AirAlertsContextAggregator.makeResolvedValue(sourceAggregate: sourceAggregate)
 
         _ = try await upsertAirAlertsEntry(
             existing: existing,
             day: day,
             city: city,
+            sourceName: sourceName,
             rawPayload: rawPayload,
             sourceURL: sourceURL,
             sourceAggregate: sourceAggregate,
@@ -383,16 +392,20 @@ extension ExternalContextManager {
 }
 
 private extension ExternalContextManager {
-    var airAlertsSourceName: String {
+    var airAlertsFallbackSourceName: String {
         MockAirAlertsConfiguration.kyivDefault.sourceName
     }
 
-    var airAlertsSourceURL: String {
+    var airAlertsFallbackSourceURL: String {
         MockAirAlertsConfiguration.kyivDefault.sourceURL
     }
 
     var airAlertsProviderCity: String {
-        MockAirAlertsConfiguration.kyivDefault.city
+        airAlertsProvider?.city ?? MockAirAlertsConfiguration.kyivDefault.city
+    }
+
+    var airAlertsCurrentDayRefreshInterval: TimeInterval {
+        TimeInterval(AlertsInUAAirAlertsConfiguration.kyivDefault.currentDayRefreshIntervalMinutes * 60)
     }
 
     var trafficSourceName: String {
@@ -460,7 +473,7 @@ private extension ExternalContextManager {
     }
 
     struct AirAlertsRawPayloadEnvelope: Codable {
-        var payload: MockAirAlertsRawPayload?
+        var payload: AirAlertsRawPayload?
     }
 
     struct AirAlertsParsedPayloadEnvelope: Codable {
@@ -591,7 +604,8 @@ private extension ExternalContextManager {
         existing: ExternalContextCache?,
         day: ExternalContextDay,
         city: String,
-        rawPayload: MockAirAlertsRawPayload,
+        sourceName: String,
+        rawPayload: AirAlertsRawPayload,
         sourceURL: String,
         sourceAggregate: AirAlertsSourceAggregate,
         resolvedValue: AirAlertsContextResolvedValue,
@@ -605,10 +619,10 @@ private extension ExternalContextManager {
         let rawPayloadJson = try encode(rawEnvelope)
         let parsedPayloadJson = try encode(parsedEnvelope)
         let resolvedValueJson = try encode(resolvedEnvelope)
-        let sourceUpdatedAt = rawPayload.intervals.map(\.endedAt).max() ?? rawPayload.generatedAt
+        let sourceUpdatedAt = rawPayload.sourceUpdatedAt ?? resolvedValue.intervals.map(\.endedAt).max()
 
         if let existing {
-            existing.sourceName = airAlertsSourceName
+            existing.sourceName = sourceName
             existing.sourceURL = sourceURL
             existing.fetchStatus = ExternalContextFetchStatus.fetched.rawValue
             existing.rawPayloadJson = rawPayloadJson
@@ -624,7 +638,7 @@ private extension ExternalContextManager {
             factor: ExternalContextFactor.airAlerts.rawValue,
             day: day.startOfDay,
             city: city,
-            sourceName: airAlertsSourceName,
+            sourceName: sourceName,
             sourceURL: sourceURL,
             fetchStatus: ExternalContextFetchStatus.fetched.rawValue,
             rawPayloadJson: rawPayloadJson,
@@ -805,6 +819,57 @@ private extension ExternalContextManager {
 
     func decodeAirAlertsRawEnvelope(_ json: String?) -> AirAlertsRawPayloadEnvelope {
         decodeEnvelope(json, default: AirAlertsRawPayloadEnvelope(payload: nil))
+    }
+
+    func preferredAirAlertsProvider(for day: ExternalContextDay) -> (any AirAlertsProvider)? {
+        if let airAlertsProvider, airAlertsProvider.supports(day: day) {
+            return airAlertsProvider
+        }
+        return airAlertsFallbackProvider
+    }
+
+    func shouldTrustCachedAirAlertsResolvedValue(
+        day: ExternalContextDay,
+        existing: ExternalContextCache?,
+        provider: (any AirAlertsProvider)?
+    ) -> Bool {
+        guard existing != nil else {
+            return false
+        }
+
+        if day == ExternalContextDay(date: Date()) {
+            return false
+        }
+
+        guard let provider else {
+            return true
+        }
+
+        return existing?.sourceName == provider.sourceName
+    }
+
+    func shouldRefetchAirAlerts(
+        day: ExternalContextDay,
+        existing: ExternalContextCache?,
+        provider: (any AirAlertsProvider)?
+    ) -> Bool {
+        guard let existing else {
+            return true
+        }
+
+        if let provider, existing.sourceName != provider.sourceName {
+            return true
+        }
+
+        guard day == ExternalContextDay(date: Date()), provider != nil else {
+            return false
+        }
+
+        guard let fetchedAt = existing.fetchedAt else {
+            return true
+        }
+
+        return Date().timeIntervalSince(fetchedAt) >= airAlertsCurrentDayRefreshInterval
     }
 
     func decodeAirAlertsParsedEnvelope(_ json: String?) -> AirAlertsParsedPayloadEnvelope {

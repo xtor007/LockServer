@@ -1,0 +1,4 @@
+[ INFO ] [Migrator] Starting prepare [database-id: mysql, migration: AccessService.CreateAccessEnter]
+[ INFO ] [Migrator] Finished prepare [database-id: mysql, migration: AccessService.CreateAccessEnter]
+[ WARNING ] MySQL error: Server error: Deadlock found when trying to get lock; try restarting transaction
+Swift/ErrorType.swift:254: Fatal error: Error raised at top level: MySQL error: Server error: Deadlock found when trying to get lock; try restarting transaction

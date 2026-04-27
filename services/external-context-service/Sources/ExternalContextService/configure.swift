@@ -23,13 +23,37 @@ func configure(_ app: Application) async throws {
     let airAlertsMode = try EnvironmentValue.string("LOCKSERVER_EXTERNAL_CONTEXT_AIR_ALERTS_MODE", default: "mock_randomized")
         .trimmingCharacters(in: .whitespacesAndNewlines)
         .lowercased()
+    let alertsInUAToken = try EnvironmentValue.string("LOCKSERVER_EXTERNAL_CONTEXT_ALERTS_IN_UA_TOKEN", default: "")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .replacingOccurrences(of: "change-me", with: "")
     let weatherMode = try EnvironmentValue.string("LOCKSERVER_EXTERNAL_CONTEXT_WEATHER_MODE", default: "enabled")
         .trimmingCharacters(in: .whitespacesAndNewlines)
         .lowercased()
+
+    let airAlertsProvider: (any AirAlertsProvider)?
+    let airAlertsFallbackProvider: (any AirAlertsProvider)?
+    switch airAlertsMode {
+    case "disabled":
+        airAlertsProvider = nil
+        airAlertsFallbackProvider = nil
+    case "alerts_in_ua":
+        guard alertsInUAToken.isEmpty == false else {
+            throw Abort(.internalServerError, reason: "LOCKSERVER_EXTERNAL_CONTEXT_ALERTS_IN_UA_TOKEN is required for alerts_in_ua mode")
+        }
+        airAlertsProvider = AlertsInUAAirAlertsProviderClient(
+            client: app.client,
+            apiToken: alertsInUAToken,
+            configuration: .kyivDefault
+        )
+        airAlertsFallbackProvider = MockAirAlertsProviderClient(configuration: .kyivDefault)
+    default:
+        airAlertsProvider = MockAirAlertsProviderClient(configuration: .kyivDefault)
+        airAlertsFallbackProvider = nil
+    }
+
     let manager = ExternalContextManager(
-        airAlertsProvider: airAlertsMode == "disabled"
-            ? nil
-            : MockAirAlertsProviderClient(configuration: .kyivDefault),
+        airAlertsProvider: airAlertsProvider,
+        airAlertsFallbackProvider: airAlertsFallbackProvider,
         trafficProvider: trafficProvider.isEmpty
             ? nil
             : PTVTrafficProviderClient(client: app.client, apiKey: trafficProvider, configuration: .kyivDefault),
