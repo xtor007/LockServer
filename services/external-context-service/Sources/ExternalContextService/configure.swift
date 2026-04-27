@@ -13,10 +13,22 @@ func configure(_ app: Application) async throws {
 
     let trafficProvider = try EnvironmentValue.string("LOCKSERVER_EXTERNAL_CONTEXT_PTV_API_KEY", default: "")
         .trimmingCharacters(in: .whitespacesAndNewlines)
+    let trafficFallbackMode = try EnvironmentValue.string("LOCKSERVER_EXTERNAL_CONTEXT_TRAFFIC_FALLBACK_MODE", default: "disabled")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+    let powerMode = try EnvironmentValue.string("LOCKSERVER_EXTERNAL_CONTEXT_POWER_MODE", default: "official_channel")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
     let manager = ExternalContextManager(
         trafficProvider: trafficProvider.isEmpty
             ? nil
-            : PTVTrafficProviderClient(client: app.client, apiKey: trafficProvider, configuration: .kyivDefault)
+            : PTVTrafficProviderClient(client: app.client, apiKey: trafficProvider, configuration: .kyivDefault),
+        powerProvider: powerMode == "disabled"
+            ? nil
+            : DTEKCityPowerProviderClient(client: app.client, configuration: .kyivDefault),
+        trafficFallbackMode: trafficFallbackMode == "fixture_when_unavailable"
+            ? .fixtureWhenUnavailable
+            : .disabled
     )
     let authClient = AttendanceAuthServiceClient(client: app.client, baseURL: try ServiceEndpoints.authBaseURL())
 

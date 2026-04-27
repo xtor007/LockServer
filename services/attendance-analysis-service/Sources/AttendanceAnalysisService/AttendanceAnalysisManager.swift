@@ -144,15 +144,16 @@ private extension AttendanceAnalysisManager {
         let outcome = AttendanceObservationBuildOutcome(status: initialOutcome.status, observation: observationDraft, details: initialOutcome.details)
 
         let observation = try await upsertObservation(outcome.observation, userId: userId, day: day, on: database)
-        let trafficContextResult = await resolveTrafficContext(day: day, observation: observation)
+        let externalContextResult = await resolveExternalContext(day: day, observation: observation)
         let resultDraft = try await makeResultDraft(
             outcome: outcome,
             observation: observation,
             userId: userId,
             day: day,
             workNormMinutes: workNormMinutes,
-            trafficScore: trafficContextResult.score,
-            externalContextNotes: trafficContextResult.notes,
+            trafficScore: externalContextResult.trafficScore,
+            powerScore: externalContextResult.powerScore,
+            externalContextNotes: externalContextResult.notes,
             on: database
         )
         let result = try await upsertResult(userId: userId, day: day, draft: resultDraft, on: database)
@@ -363,6 +364,7 @@ private extension AttendanceAnalysisManager {
         day: AttendanceDay,
         workNormMinutes: Int,
         trafficScore: Double?,
+        powerScore: Double?,
         externalContextNotes: [String]?,
         on database: Database
     ) async throws -> AttendanceAnalysisResultDraft {
@@ -398,6 +400,7 @@ private extension AttendanceAnalysisManager {
                         calculationNotes: []
                     ),
                     trafficScore: nil,
+                    powerScore: nil,
                     externalContextNotes: nil
                 )
             )
@@ -433,6 +436,7 @@ private extension AttendanceAnalysisManager {
                         calculationNotes: ["target_day_technical_anomaly"]
                     ),
                     trafficScore: nil,
+                    powerScore: nil,
                     externalContextNotes: nil
                 )
             )
@@ -469,6 +473,7 @@ private extension AttendanceAnalysisManager {
                             calculationNotes: ["missing_first_entry_time_for_signal_stage"]
                         ),
                         trafficScore: nil,
+                        powerScore: nil,
                         externalContextNotes: nil
                     )
                 )
@@ -501,6 +506,7 @@ private extension AttendanceAnalysisManager {
                     snapshot: calculation.snapshot,
                     debug: calculation.debug,
                     trafficScore: trafficScore,
+                    powerScore: powerScore,
                     externalContextNotes: externalContextNotes
                 )
             )
@@ -537,6 +543,7 @@ private extension AttendanceAnalysisManager {
         snapshot: AttendanceCoreSignalCalculator.Snapshot,
         debug: AttendanceCoreSignalCalculator.Debug,
         trafficScore: Double?,
+        powerScore: Double?,
         externalContextNotes: [String]?
     ) -> AttendanceAnalysisDebugDetails {
         AttendanceAnalysisDebugDetails(
@@ -560,20 +567,45 @@ private extension AttendanceAnalysisManager {
             f: snapshot.f,
             calculationNotes: debug.calculationNotes.isEmpty ? nil : debug.calculationNotes,
             trafficScore: trafficScore,
+            powerScore: powerScore,
             externalContextNotes: externalContextNotes
         )
     }
 
-    func resolveTrafficContext(day: AttendanceDay, observation: AttendanceDayObservation?) async -> (score: Double?, notes: [String]?) {
+    func resolveExternalContext(
+        day: AttendanceDay,
+        observation: AttendanceDayObservation?
+    ) async -> (trafficScore: Double?, powerScore: Double?, notes: [String]?) {
         guard let observation, let arrivalTime = observation.firstEntryTime else {
-            return (nil, nil)
+            return (nil, nil, nil)
         }
 
+        let resolvedTraffic = await resolveTrafficScore(day: day, arrivalTime: arrivalTime)
+        let resolvedPower = await resolvePowerScore(day: day, arrivalTime: arrivalTime)
+        let notes = [resolvedTraffic.note, resolvedPower.note].compactMap { $0 }
+
+        return (
+            resolvedTraffic.score,
+            resolvedPower.score,
+            notes.isEmpty ? nil : notes
+        )
+    }
+
+    func resolveTrafficScore(day: AttendanceDay, arrivalTime: Date) async -> (score: Double?, note: String?) {
         do {
             let response = try await externalContextClient.resolveTraffic(day: day.stringValue, arrivalTime: arrivalTime)
             return (response.trafficScore, nil)
         } catch {
-            return (nil, ["traffic_context_unavailable"])
+            return (nil, "traffic_context_unavailable")
+        }
+    }
+
+    func resolvePowerScore(day: AttendanceDay, arrivalTime: Date) async -> (score: Double?, note: String?) {
+        do {
+            let response = try await externalContextClient.resolvePower(day: day.stringValue, arrivalTime: arrivalTime)
+            return (response.powerScore, nil)
+        } catch {
+            return (nil, "power_context_unavailable")
         }
     }
 }

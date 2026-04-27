@@ -5,11 +5,19 @@ import Vapor
 
 struct ExternalContextManager {
     private let trafficProvider: PTVTrafficProviderClient?
+    private let powerProvider: DTEKCityPowerProviderClient?
+    private let trafficFallbackMode: TrafficFallbackMode
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
-    init(trafficProvider: PTVTrafficProviderClient?) {
+    init(
+        trafficProvider: PTVTrafficProviderClient?,
+        powerProvider: DTEKCityPowerProviderClient?,
+        trafficFallbackMode: TrafficFallbackMode
+    ) {
         self.trafficProvider = trafficProvider
+        self.powerProvider = powerProvider
+        self.trafficFallbackMode = trafficFallbackMode
 
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -19,6 +27,11 @@ struct ExternalContextManager {
         decoder.dateDecodingStrategy = .iso8601
         self.decoder = decoder
     }
+}
+
+enum TrafficFallbackMode {
+    case disabled
+    case fixtureWhenUnavailable
 }
 
 extension ExternalContextManager {
@@ -50,19 +63,44 @@ extension ExternalContextManager {
         let city = trafficProviderCity
         let bucketKey = hourBucketKey(for: request.arrivalTime)
 
-        let existing = try await findEntry(day: day, factor: factor, on: database)
-        let resolvedEnvelope = decodeResolvedEnvelope(existing?.resolvedValueJson)
+        let existing = try await findEntry(day: day, factor: factor, city: city, on: database)
+        let resolvedEnvelope = decodeTrafficResolvedEnvelope(existing?.resolvedValueJson)
 
         if let resolvedValue = resolvedEnvelope.buckets[bucketKey] {
             return resolvedValue
         }
 
-        guard let trafficProvider else {
-            throw Abort(.serviceUnavailable, reason: "PTV traffic provider is not configured")
+        let sourceAggregate: TrafficSourceAggregate
+        let sourceName: String
+        let sourceURL: String
+        let fetchStatus: ExternalContextFetchStatus
+
+        if let trafficProvider {
+            do {
+                let fetchOutput = try await trafficProvider.fetchTraffic(at: request.arrivalTime)
+                sourceAggregate = TrafficContextAggregator.makeSourceAggregate(providerMode: fetchOutput.providerMode, routes: fetchOutput.routes)
+                sourceName = trafficSourceName
+                sourceURL = trafficSourceURL
+                fetchStatus = .fetched
+            } catch {
+                guard trafficFallbackMode == .fixtureWhenUnavailable else {
+                    throw error
+                }
+                sourceAggregate = TrafficContextFallback.makeSourceAggregate(for: request.arrivalTime)
+                sourceName = trafficFallbackSourceName
+                sourceURL = trafficFallbackSourceURL
+                fetchStatus = .cached
+            }
+        } else {
+            guard trafficFallbackMode == .fixtureWhenUnavailable else {
+                throw Abort(.serviceUnavailable, reason: "PTV traffic provider is not configured")
+            }
+            sourceAggregate = TrafficContextFallback.makeSourceAggregate(for: request.arrivalTime)
+            sourceName = trafficFallbackSourceName
+            sourceURL = trafficFallbackSourceURL
+            fetchStatus = .cached
         }
 
-        let fetchOutput = try await trafficProvider.fetchTraffic(at: request.arrivalTime)
-        let sourceAggregate = TrafficContextAggregator.makeSourceAggregate(providerMode: fetchOutput.providerMode, routes: fetchOutput.routes)
         let resolvedValue = TrafficContextAggregator.makeResolvedValue(sourceAggregate: sourceAggregate)
 
         let fetchedAt = Date()
@@ -70,6 +108,62 @@ extension ExternalContextManager {
             existing: existing,
             day: day,
             city: city,
+            sourceName: sourceName,
+            sourceURL: sourceURL,
+            fetchStatus: fetchStatus,
+            bucketKey: bucketKey,
+            sourceAggregate: sourceAggregate,
+            resolvedValue: resolvedValue,
+            fetchedAt: fetchedAt,
+            on: database
+        )
+
+        return resolvedValue
+    }
+
+    func resolvePower(_ request: PowerContextResolveRequest, on database: Database) async throws -> PowerContextResolvedValue {
+        let day = try ExternalContextDay(request.day)
+        let factor = ExternalContextFactor.powerAvailability
+        let city = powerProviderCity
+        let bucketKey = hourBucketKey(for: request.arrivalTime)
+
+        let existing = try await findEntry(day: day, factor: factor, city: city, on: database)
+        let resolvedEnvelope = decodePowerResolvedEnvelope(existing?.resolvedValueJson)
+
+        if let resolvedValue = resolvedEnvelope.buckets[bucketKey] {
+            return resolvedValue
+        }
+
+        guard let powerProvider else {
+            throw Abort(.serviceUnavailable, reason: "DTEK power provider is not configured")
+        }
+
+        let rawEnvelope = decodePowerRawEnvelope(existing?.rawPayloadJson)
+        let signals: [DTEKPowerCitySignal]
+        let fetchedAt: Date?
+        let shouldRefetchSignals = rawEnvelope.signals.isEmpty || existing?.sourceName != powerSourceName
+
+        if shouldRefetchSignals {
+            let fetchOutput = try await powerProvider.fetchKyivSignals()
+            signals = fetchOutput.signals
+            fetchedAt = Date()
+        } else {
+            signals = rawEnvelope.signals
+            fetchedAt = nil
+        }
+
+        let sourceAggregate = PowerContextAggregator.makeSourceAggregate(
+            arrivalTime: request.arrivalTime,
+            maxSignalAgeHours: powerMaxSignalAgeHours,
+            signals: signals
+        )
+        let resolvedValue = PowerContextAggregator.makeResolvedValue(sourceAggregate: sourceAggregate)
+
+        _ = try await upsertPowerEntry(
+            existing: existing,
+            day: day,
+            city: city,
+            signals: signals,
             bucketKey: bucketKey,
             sourceAggregate: sourceAggregate,
             resolvedValue: resolvedValue,
@@ -94,23 +188,66 @@ private extension ExternalContextManager {
         PTVTrafficConfiguration.kyivDefault.city
     }
 
-    struct RawPayloadEnvelope: Codable {
+    var trafficFallbackSourceName: String {
+        "ptv-developer-routing-fixture"
+    }
+
+    var trafficFallbackSourceURL: String {
+        "fixture://traffic/dev-fallback"
+    }
+
+    var powerSourceName: String {
+        DTEKCityPowerConfiguration.kyivDefault.sourceName
+    }
+
+    var powerSourceURL: String {
+        DTEKCityPowerConfiguration.kyivDefault.sourceURL
+    }
+
+    var powerProviderCity: String {
+        DTEKCityPowerConfiguration.kyivDefault.city
+    }
+
+    var powerMaxSignalAgeHours: Int {
+        DTEKCityPowerConfiguration.kyivDefault.maxSignalAgeHours
+    }
+
+    struct TrafficRawPayloadEnvelope: Codable {
         var buckets: [String: TrafficSourceAggregate]
     }
 
-    struct ParsedPayloadEnvelope: Codable {
+    struct TrafficParsedPayloadEnvelope: Codable {
         var buckets: [String: TrafficContextResolvedValue]
     }
 
-    struct ResolvedPayloadEnvelope: Codable {
+    struct TrafficResolvedPayloadEnvelope: Codable {
         var buckets: [String: TrafficContextResolvedValue]
+    }
+
+    struct PowerRawPayloadEnvelope: Codable {
+        var signals: [DTEKPowerCitySignal]
+    }
+
+    struct PowerParsedPayloadEnvelope: Codable {
+        var buckets: [String: PowerSourceAggregate]
+    }
+
+    struct PowerResolvedPayloadEnvelope: Codable {
+        var buckets: [String: PowerContextResolvedValue]
     }
 
     func findEntry(day: ExternalContextDay, factor: ExternalContextFactor, on database: Database) async throws -> ExternalContextCache? {
         try await ExternalContextCache.query(on: database)
             .filter(\.$day == day.startOfDay)
             .filter(\.$factor == factor.rawValue)
-            .filter(\.$city == trafficProviderCity)
+            .first()
+    }
+
+    func findEntry(day: ExternalContextDay, factor: ExternalContextFactor, city: String, on database: Database) async throws -> ExternalContextCache? {
+        try await ExternalContextCache.query(on: database)
+            .filter(\.$day == day.startOfDay)
+            .filter(\.$factor == factor.rawValue)
+            .filter(\.$city == city)
             .first()
     }
 
@@ -118,15 +255,18 @@ private extension ExternalContextManager {
         existing: ExternalContextCache?,
         day: ExternalContextDay,
         city: String,
+        sourceName: String,
+        sourceURL: String,
+        fetchStatus: ExternalContextFetchStatus,
         bucketKey: String,
         sourceAggregate: TrafficSourceAggregate,
         resolvedValue: TrafficContextResolvedValue,
         fetchedAt: Date,
         on database: Database
     ) async throws -> ExternalContextCache {
-        var rawEnvelope = decodeRawEnvelope(existing?.rawPayloadJson)
-        var parsedEnvelope = decodeParsedEnvelope(existing?.parsedPayloadJson)
-        var resolvedEnvelope = decodeResolvedEnvelope(existing?.resolvedValueJson)
+        var rawEnvelope = decodeTrafficRawEnvelope(existing?.rawPayloadJson)
+        var parsedEnvelope = decodeTrafficParsedEnvelope(existing?.parsedPayloadJson)
+        var resolvedEnvelope = decodeTrafficResolvedEnvelope(existing?.resolvedValueJson)
 
         rawEnvelope.buckets[bucketKey] = sourceAggregate
         parsedEnvelope.buckets[bucketKey] = resolvedValue
@@ -137,9 +277,9 @@ private extension ExternalContextManager {
         let resolvedValueJson = try encode(resolvedEnvelope)
 
         if let existing {
-            existing.sourceName = trafficSourceName
-            existing.sourceURL = trafficSourceURL
-            existing.fetchStatus = ExternalContextFetchStatus.fetched.rawValue
+            existing.sourceName = sourceName
+            existing.sourceURL = sourceURL
+            existing.fetchStatus = fetchStatus.rawValue
             existing.rawPayloadJson = rawPayloadJson
             existing.parsedPayloadJson = parsedPayloadJson
             existing.resolvedValueJson = resolvedValueJson
@@ -152,9 +292,9 @@ private extension ExternalContextManager {
             factor: ExternalContextFactor.traffic.rawValue,
             day: day.startOfDay,
             city: city,
-            sourceName: trafficSourceName,
-            sourceURL: trafficSourceURL,
-            fetchStatus: ExternalContextFetchStatus.fetched.rawValue,
+            sourceName: sourceName,
+            sourceURL: sourceURL,
+            fetchStatus: fetchStatus.rawValue,
             rawPayloadJson: rawPayloadJson,
             parsedPayloadJson: parsedPayloadJson,
             resolvedValueJson: resolvedValueJson,
@@ -164,10 +304,63 @@ private extension ExternalContextManager {
         return entry
     }
 
+    func upsertPowerEntry(
+        existing: ExternalContextCache?,
+        day: ExternalContextDay,
+        city: String,
+        signals: [DTEKPowerCitySignal],
+        bucketKey: String,
+        sourceAggregate: PowerSourceAggregate,
+        resolvedValue: PowerContextResolvedValue,
+        fetchedAt: Date?,
+        on database: Database
+    ) async throws -> ExternalContextCache {
+        let rawEnvelope = PowerRawPayloadEnvelope(signals: signals)
+        var parsedEnvelope = decodePowerParsedEnvelope(existing?.parsedPayloadJson)
+        var resolvedEnvelope = decodePowerResolvedEnvelope(existing?.resolvedValueJson)
+
+        parsedEnvelope.buckets[bucketKey] = sourceAggregate
+        resolvedEnvelope.buckets[bucketKey] = resolvedValue
+
+        let rawPayloadJson = try encode(rawEnvelope)
+        let parsedPayloadJson = try encode(parsedEnvelope)
+        let resolvedValueJson = try encode(resolvedEnvelope)
+        let sourceUpdatedAt = signals.map(\.publishedAt).max() ?? sourceAggregate.signalPublishedAt
+
+        if let existing {
+            existing.sourceName = powerSourceName
+            existing.sourceURL = powerSourceURL
+            existing.fetchStatus = ExternalContextFetchStatus.fetched.rawValue
+            existing.rawPayloadJson = rawPayloadJson
+            existing.parsedPayloadJson = parsedPayloadJson
+            existing.resolvedValueJson = resolvedValueJson
+            existing.sourceUpdatedAt = sourceUpdatedAt
+            existing.fetchedAt = fetchedAt ?? existing.fetchedAt
+            try await existing.update(on: database)
+            return existing
+        }
+
+        let entry = ExternalContextCache(
+            factor: ExternalContextFactor.powerAvailability.rawValue,
+            day: day.startOfDay,
+            city: city,
+            sourceName: powerSourceName,
+            sourceURL: powerSourceURL,
+            fetchStatus: ExternalContextFetchStatus.fetched.rawValue,
+            rawPayloadJson: rawPayloadJson,
+            parsedPayloadJson: parsedPayloadJson,
+            resolvedValueJson: resolvedValueJson,
+            sourceUpdatedAt: sourceUpdatedAt,
+            fetchedAt: fetchedAt
+        )
+        try await entry.create(on: database)
+        return entry
+    }
+
     func makeDayFactorResponse(_ entry: ExternalContextCache) -> ExternalContextDayFactorResponse {
         ExternalContextDayFactorResponse(
             factor: entry.factor,
-            values: makeHourScores(from: entry.resolvedValueJson)
+            values: makeHourScores(from: entry.factor, json: entry.resolvedValueJson)
         )
     }
 
@@ -175,7 +368,7 @@ private extension ExternalContextManager {
         ExternalContextFactorResponse(
             day: ExternalContextDay(date: entry.day).stringValue,
             factor: entry.factor,
-            values: makeHourScores(from: entry.resolvedValueJson)
+            values: makeHourScores(from: entry.factor, json: entry.resolvedValueJson)
         )
     }
 
@@ -186,16 +379,28 @@ private extension ExternalContextManager {
         return String(format: "%02d", hour)
     }
 
-    func decodeRawEnvelope(_ json: String?) -> RawPayloadEnvelope {
-        decodeEnvelope(json, default: RawPayloadEnvelope(buckets: [:]))
+    func decodeTrafficRawEnvelope(_ json: String?) -> TrafficRawPayloadEnvelope {
+        decodeEnvelope(json, default: TrafficRawPayloadEnvelope(buckets: [:]))
     }
 
-    func decodeParsedEnvelope(_ json: String?) -> ParsedPayloadEnvelope {
-        decodeEnvelope(json, default: ParsedPayloadEnvelope(buckets: [:]))
+    func decodeTrafficParsedEnvelope(_ json: String?) -> TrafficParsedPayloadEnvelope {
+        decodeEnvelope(json, default: TrafficParsedPayloadEnvelope(buckets: [:]))
     }
 
-    func decodeResolvedEnvelope(_ json: String?) -> ResolvedPayloadEnvelope {
-        decodeEnvelope(json, default: ResolvedPayloadEnvelope(buckets: [:]))
+    func decodeTrafficResolvedEnvelope(_ json: String?) -> TrafficResolvedPayloadEnvelope {
+        decodeEnvelope(json, default: TrafficResolvedPayloadEnvelope(buckets: [:]))
+    }
+
+    func decodePowerRawEnvelope(_ json: String?) -> PowerRawPayloadEnvelope {
+        decodeEnvelope(json, default: PowerRawPayloadEnvelope(signals: []))
+    }
+
+    func decodePowerParsedEnvelope(_ json: String?) -> PowerParsedPayloadEnvelope {
+        decodeEnvelope(json, default: PowerParsedPayloadEnvelope(buckets: [:]))
+    }
+
+    func decodePowerResolvedEnvelope(_ json: String?) -> PowerResolvedPayloadEnvelope {
+        decodeEnvelope(json, default: PowerResolvedPayloadEnvelope(buckets: [:]))
     }
 
     func decodeEnvelope<T: Decodable>(_ json: String?, default defaultValue: T) -> T {
@@ -213,13 +418,30 @@ private extension ExternalContextManager {
         return string
     }
 
-    func makeHourScores(from json: String?) -> [TrafficContextHourScore] {
-        let resolvedEnvelope = decodeResolvedEnvelope(json)
-        return resolvedEnvelope.buckets.keys.sorted().compactMap { key in
-            guard let value = resolvedEnvelope.buckets[key], let arrivalHour = Int(key) else {
-                return nil
+    func makeHourScores(from factorString: String, json: String?) -> [ExternalContextHourScore] {
+        guard let factor = ExternalContextFactor(rawValue: factorString) else {
+            return []
+        }
+
+        switch factor {
+        case .traffic:
+            let resolvedEnvelope = decodeTrafficResolvedEnvelope(json)
+            return resolvedEnvelope.buckets.keys.sorted().compactMap { key in
+                guard let value = resolvedEnvelope.buckets[key], let arrivalHour = Int(key) else {
+                    return nil
+                }
+                return ExternalContextHourScore(arrivalHour: arrivalHour, score: value.trafficScore)
             }
-            return TrafficContextHourScore(arrivalHour: arrivalHour, trafficScore: value.trafficScore)
+        case .powerAvailability:
+            let resolvedEnvelope = decodePowerResolvedEnvelope(json)
+            return resolvedEnvelope.buckets.keys.sorted().compactMap { key in
+                guard let value = resolvedEnvelope.buckets[key], let arrivalHour = Int(key) else {
+                    return nil
+                }
+                return ExternalContextHourScore(arrivalHour: arrivalHour, score: value.powerScore)
+            }
+        case .airAlerts, .weather:
+            return []
         }
     }
 }

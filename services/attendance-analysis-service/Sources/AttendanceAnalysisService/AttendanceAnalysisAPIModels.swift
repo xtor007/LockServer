@@ -94,6 +94,7 @@ struct AttendanceAnalysisDebugDetails: Content, Codable, Equatable {
     let f: Double?
     let calculationNotes: [String]?
     let trafficScore: Double?
+    let powerScore: Double?
     let externalContextNotes: [String]?
 
     init(
@@ -117,6 +118,7 @@ struct AttendanceAnalysisDebugDetails: Content, Codable, Equatable {
         f: Double?,
         calculationNotes: [String]?,
         trafficScore: Double? = nil,
+        powerScore: Double? = nil,
         externalContextNotes: [String]? = nil
     ) {
         self.workNormMinutes = workNormMinutes
@@ -139,6 +141,7 @@ struct AttendanceAnalysisDebugDetails: Content, Codable, Equatable {
         self.f = f
         self.calculationNotes = calculationNotes
         self.trafficScore = trafficScore
+        self.powerScore = powerScore
         self.externalContextNotes = externalContextNotes
     }
 }

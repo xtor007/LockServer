@@ -26,9 +26,9 @@ public struct ExternalContextDayResponse: Content, Codable, Equatable {
 
 public struct ExternalContextDayFactorResponse: Content, Codable, Equatable {
     public let factor: String
-    public let values: [TrafficContextHourScore]
+    public let values: [ExternalContextHourScore]
 
-    public init(factor: String, values: [TrafficContextHourScore]) {
+    public init(factor: String, values: [ExternalContextHourScore]) {
         self.factor = factor
         self.values = values
     }
@@ -37,9 +37,9 @@ public struct ExternalContextDayFactorResponse: Content, Codable, Equatable {
 public struct ExternalContextFactorResponse: Content, Codable, Equatable {
     public let day: String
     public let factor: String
-    public let values: [TrafficContextHourScore]
+    public let values: [ExternalContextHourScore]
 
-    public init(day: String, factor: String, values: [TrafficContextHourScore]) {
+    public init(day: String, factor: String, values: [ExternalContextHourScore]) {
         self.day = day
         self.factor = factor
         self.values = values
@@ -56,13 +56,38 @@ public struct TrafficContextResolveRequest: Content, Codable, Equatable {
     }
 }
 
-public struct TrafficContextHourScore: Content, Codable, Equatable {
-    public let arrivalHour: Int
-    public let trafficScore: Double
+public struct PowerContextResolveRequest: Content, Codable, Equatable {
+    public let day: String
+    public let arrivalTime: Date
 
-    public init(arrivalHour: Int, trafficScore: Double) {
+    public init(day: String, arrivalTime: Date) {
+        self.day = day
+        self.arrivalTime = arrivalTime
+    }
+}
+
+public struct ExternalContextHourScore: Content, Codable, Equatable {
+    public let arrivalHour: Int
+    public let score: Double?
+
+    public init(arrivalHour: Int, score: Double?) {
         self.arrivalHour = arrivalHour
-        self.trafficScore = trafficScore
+        self.score = score
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case arrivalHour
+        case score
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(arrivalHour, forKey: .arrivalHour)
+        if let score {
+            try container.encode(score, forKey: .score)
+        } else {
+            try container.encodeNil(forKey: .score)
+        }
     }
 }
 
@@ -71,5 +96,26 @@ public struct TrafficContextResolvedValue: Content, Codable, Equatable {
 
     public init(trafficScore: Double) {
         self.trafficScore = trafficScore
+    }
+}
+
+public struct PowerContextResolvedValue: Content, Codable, Equatable {
+    public let powerScore: Double?
+
+    public init(powerScore: Double?) {
+        self.powerScore = powerScore
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case powerScore
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        if let powerScore {
+            try container.encode(powerScore, forKey: .powerScore)
+        } else {
+            try container.encodeNil(forKey: .powerScore)
+        }
     }
 }

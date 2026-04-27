@@ -99,10 +99,12 @@ wait_for_url "http://127.0.0.1:${LOCKSERVER_ATTENDANCE_ANALYSIS_PORT}/validate"
 wait_for_url "http://127.0.0.1:${LOCKSERVER_EXTERNAL_CONTEXT_PORT}/validate"
 wait_for_url "http://127.0.0.1:${LOCKSERVER_GATEWAY_PORT}/validate"
 
-if [[ -n "${LOCKSERVER_EXTERNAL_CONTEXT_PTV_API_KEY:-}" ]]; then
-  echo "Skipping attendance-analysis fixture materialization because live PTV traffic is configured."
+if [[ "${LOCKSERVER_SKIP_ATTENDANCE_FIXTURE_MATERIALIZATION:-0}" == "1" ]]; then
+  echo "Skipping attendance-analysis fixture materialization because LOCKSERVER_SKIP_ATTENDANCE_FIXTURE_MATERIALIZATION=1."
 else
-  "$ROOT_DIR/infrastructure/local/materialize-attendance-analysis-fixture.sh" "$ENV_FILE"
+  if ! "$ROOT_DIR/infrastructure/local/materialize-attendance-analysis-fixture.sh" "$ENV_FILE"; then
+    echo "Warning: attendance-analysis fixture materialization finished with errors."
+  fi
 fi
 
 echo "LockServer microservices are running."

@@ -16,4 +16,11 @@ struct AttendanceExternalContextServiceClient {
             body: TrafficContextResolveRequest(day: day, arrivalTime: arrivalTime)
         )
     }
+
+    func resolvePower(day: String, arrivalTime: Date) async throws -> PowerContextResolvedValue {
+        try await serviceClient.post(
+            "/internal/external-context/power/resolve",
+            body: PowerContextResolveRequest(day: day, arrivalTime: arrivalTime)
+        )
+    }
 }

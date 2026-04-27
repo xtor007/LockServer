@@ -19,6 +19,7 @@ set +a
 
 GATEWAY_URL="http://127.0.0.1:${LOCKSERVER_GATEWAY_PORT}"
 ATTENDANCE_GATEWAY_URL="$GATEWAY_URL/internal/attendance-analysis"
+EXTERNAL_CONTEXT_URL="http://127.0.0.1:${LOCKSERVER_EXTERNAL_CONTEXT_PORT}"
 ATTENDANCE_FIXTURE_DAYS=(
   "2026-04-06"
   "2026-04-07"
@@ -50,5 +51,27 @@ for day in "${ATTENDANCE_FIXTURE_DAYS[@]}"; do
     "$ATTENDANCE_GATEWAY_URL/observations/rebuild-all" \
     | jq -e --arg day "$day" '.day == $day and .processedCount >= 7 and (.items | all(.status == "signals_ready" or .status == "insufficient_history"))' >/dev/null
 done
+
+TODAY_UTC="$(date -u +%F)"
+TODAY_SAMPLE_ARRIVAL_TIME="${TODAY_UTC}T08:00:00Z"
+
+echo "Materializing current external-context sample for $TODAY_UTC..."
+if [[ -n "${LOCKSERVER_EXTERNAL_CONTEXT_PTV_API_KEY:-}" ]]; then
+  if ! curl -sS -X POST \
+    -H "Content-Type: application/json" \
+    -d "{\"day\":\"$TODAY_UTC\",\"arrivalTime\":\"$TODAY_SAMPLE_ARRIVAL_TIME\"}" \
+    "$EXTERNAL_CONTEXT_URL/internal/external-context/traffic/resolve" \
+    | jq -e '.trafficScore != null' >/dev/null; then
+    echo "Warning: failed to materialize current traffic sample."
+  fi
+fi
+
+if ! curl -sS -X POST \
+  -H "Content-Type: application/json" \
+  -d "{\"day\":\"$TODAY_UTC\",\"arrivalTime\":\"$TODAY_SAMPLE_ARRIVAL_TIME\"}" \
+  "$EXTERNAL_CONTEXT_URL/internal/external-context/power/resolve" \
+  | jq -e 'has("powerScore")' >/dev/null; then
+  echo "Warning: failed to materialize current power sample."
+fi
 
 echo "Attendance-analysis fixture is materialized."
