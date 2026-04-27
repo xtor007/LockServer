@@ -93,6 +93,54 @@ struct AttendanceAnalysisDebugDetails: Content, Codable, Equatable {
     let zT: Double?
     let f: Double?
     let calculationNotes: [String]?
+    let trafficScore: Double?
+    let externalContextNotes: [String]?
+
+    init(
+        workNormMinutes: Int,
+        rawEventCount: Int,
+        rawEvents: [AttendanceDebugEvent],
+        sessionStartsCount: Int,
+        completedSessionsCount: Int,
+        sessionRanges: [AttendanceDebugSession],
+        anomalyReasons: [String],
+        note: String?,
+        baselineWindowDays: Int?,
+        historyDaysUsed: Int?,
+        baselineHistoryDays: [AttendanceBaselineHistoryDebugDay]?,
+        deficitHistoryDaysCount: Int?,
+        averageStartMinutes: Double?,
+        stddevStartMinutes: Double?,
+        stddevWorkedMinutes: Double?,
+        zS: Double?,
+        zT: Double?,
+        f: Double?,
+        calculationNotes: [String]?,
+        trafficScore: Double? = nil,
+        externalContextNotes: [String]? = nil
+    ) {
+        self.workNormMinutes = workNormMinutes
+        self.rawEventCount = rawEventCount
+        self.rawEvents = rawEvents
+        self.sessionStartsCount = sessionStartsCount
+        self.completedSessionsCount = completedSessionsCount
+        self.sessionRanges = sessionRanges
+        self.anomalyReasons = anomalyReasons
+        self.note = note
+        self.baselineWindowDays = baselineWindowDays
+        self.historyDaysUsed = historyDaysUsed
+        self.baselineHistoryDays = baselineHistoryDays
+        self.deficitHistoryDaysCount = deficitHistoryDaysCount
+        self.averageStartMinutes = averageStartMinutes
+        self.stddevStartMinutes = stddevStartMinutes
+        self.stddevWorkedMinutes = stddevWorkedMinutes
+        self.zS = zS
+        self.zT = zT
+        self.f = f
+        self.calculationNotes = calculationNotes
+        self.trafficScore = trafficScore
+        self.externalContextNotes = externalContextNotes
+    }
 }
 
 struct AttendanceDebugEvent: Content, Codable, Equatable {

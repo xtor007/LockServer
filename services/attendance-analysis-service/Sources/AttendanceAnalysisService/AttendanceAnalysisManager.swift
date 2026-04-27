@@ -7,15 +7,22 @@ import Vapor
 struct AttendanceAnalysisManager {
     private let directoryClient: AttendanceDirectoryServiceClient
     private let accessClient: AttendanceAccessServiceClient
+    private let externalContextClient: AttendanceExternalContextServiceClient
     private let builder = AttendanceObservationBuilder()
     private let signalCalculator: AttendanceCoreSignalCalculator
     private let baselineWindowDays: Int
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
-    init(directoryClient: AttendanceDirectoryServiceClient, accessClient: AttendanceAccessServiceClient, baselineWindowDays: Int) {
+    init(
+        directoryClient: AttendanceDirectoryServiceClient,
+        accessClient: AttendanceAccessServiceClient,
+        externalContextClient: AttendanceExternalContextServiceClient,
+        baselineWindowDays: Int
+    ) {
         self.directoryClient = directoryClient
         self.accessClient = accessClient
+        self.externalContextClient = externalContextClient
         self.baselineWindowDays = max(baselineWindowDays, 1)
         self.signalCalculator = AttendanceCoreSignalCalculator(baselineWindowDays: self.baselineWindowDays)
 
@@ -137,12 +144,15 @@ private extension AttendanceAnalysisManager {
         let outcome = AttendanceObservationBuildOutcome(status: initialOutcome.status, observation: observationDraft, details: initialOutcome.details)
 
         let observation = try await upsertObservation(outcome.observation, userId: userId, day: day, on: database)
+        let trafficContextResult = await resolveTrafficContext(day: day, observation: observation)
         let resultDraft = try await makeResultDraft(
             outcome: outcome,
             observation: observation,
             userId: userId,
             day: day,
             workNormMinutes: workNormMinutes,
+            trafficScore: trafficContextResult.score,
+            externalContextNotes: trafficContextResult.notes,
             on: database
         )
         let result = try await upsertResult(userId: userId, day: day, draft: resultDraft, on: database)
@@ -352,6 +362,8 @@ private extension AttendanceAnalysisManager {
         userId: UUID,
         day: AttendanceDay,
         workNormMinutes: Int,
+        trafficScore: Double?,
+        externalContextNotes: [String]?,
         on database: Database
     ) async throws -> AttendanceAnalysisResultDraft {
         switch outcome.status {
@@ -384,7 +396,9 @@ private extension AttendanceAnalysisManager {
                         historyDays: [],
                         deficitHistoryDaysCount: 0,
                         calculationNotes: []
-                    )
+                    ),
+                    trafficScore: nil,
+                    externalContextNotes: nil
                 )
             )
 
@@ -417,7 +431,9 @@ private extension AttendanceAnalysisManager {
                         historyDays: [],
                         deficitHistoryDaysCount: 0,
                         calculationNotes: ["target_day_technical_anomaly"]
-                    )
+                    ),
+                    trafficScore: nil,
+                    externalContextNotes: nil
                 )
             )
 
@@ -451,7 +467,9 @@ private extension AttendanceAnalysisManager {
                             historyDays: [],
                             deficitHistoryDaysCount: 0,
                             calculationNotes: ["missing_first_entry_time_for_signal_stage"]
-                        )
+                        ),
+                        trafficScore: nil,
+                        externalContextNotes: nil
                     )
                 )
             }
@@ -478,7 +496,13 @@ private extension AttendanceAnalysisManager {
                 zS: calculation.snapshot.zS,
                 zT: calculation.snapshot.zT,
                 f: calculation.snapshot.f,
-                details: makeDebugDetails(from: outcome.details, snapshot: calculation.snapshot, debug: calculation.debug)
+                details: makeDebugDetails(
+                    from: outcome.details,
+                    snapshot: calculation.snapshot,
+                    debug: calculation.debug,
+                    trafficScore: trafficScore,
+                    externalContextNotes: externalContextNotes
+                )
             )
         }
     }
@@ -511,7 +535,9 @@ private extension AttendanceAnalysisManager {
     func makeDebugDetails(
         from source: AttendanceAnalysisDebugDetails,
         snapshot: AttendanceCoreSignalCalculator.Snapshot,
-        debug: AttendanceCoreSignalCalculator.Debug
+        debug: AttendanceCoreSignalCalculator.Debug,
+        trafficScore: Double?,
+        externalContextNotes: [String]?
     ) -> AttendanceAnalysisDebugDetails {
         AttendanceAnalysisDebugDetails(
             workNormMinutes: snapshot.workNormMinutes,
@@ -532,7 +558,22 @@ private extension AttendanceAnalysisManager {
             zS: snapshot.zS,
             zT: snapshot.zT,
             f: snapshot.f,
-            calculationNotes: debug.calculationNotes.isEmpty ? nil : debug.calculationNotes
+            calculationNotes: debug.calculationNotes.isEmpty ? nil : debug.calculationNotes,
+            trafficScore: trafficScore,
+            externalContextNotes: externalContextNotes
         )
+    }
+
+    func resolveTrafficContext(day: AttendanceDay, observation: AttendanceDayObservation?) async -> (score: Double?, notes: [String]?) {
+        guard let observation, let arrivalTime = observation.firstEntryTime else {
+            return (nil, nil)
+        }
+
+        do {
+            let response = try await externalContextClient.resolveTraffic(day: day.stringValue, arrivalTime: arrivalTime)
+            return (response.trafficScore, nil)
+        } catch {
+            return (nil, ["traffic_context_unavailable"])
+        }
     }
 }

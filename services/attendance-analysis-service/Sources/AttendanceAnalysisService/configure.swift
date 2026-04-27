@@ -16,6 +16,7 @@ func configure(_ app: Application) async throws {
     let manager = AttendanceAnalysisManager(
         directoryClient: AttendanceDirectoryServiceClient(client: app.client, baseURL: try ServiceEndpoints.directoryBaseURL()),
         accessClient: AttendanceAccessServiceClient(client: app.client, baseURL: try ServiceEndpoints.accessBaseURL()),
+        externalContextClient: AttendanceExternalContextServiceClient(client: app.client, baseURL: try ServiceEndpoints.externalContextBaseURL()),
         baselineWindowDays: try EnvironmentValue.int("LOCKSERVER_ATTENDANCE_ANALYSIS_BASELINE_WINDOW_DAYS", default: 3)
     )
     let authClient = AttendanceAuthServiceClient(client: app.client, baseURL: try ServiceEndpoints.authBaseURL())

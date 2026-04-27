@@ -10,7 +10,8 @@ func configure(_ app: Application) async throws {
         authBaseURL: ServiceEndpoints.authBaseURL(),
         directoryBaseURL: ServiceEndpoints.directoryBaseURL(),
         accessBaseURL: ServiceEndpoints.accessBaseURL(),
-        attendanceAnalysisBaseURL: ServiceEndpoints.attendanceAnalysisBaseURL()
+        attendanceAnalysisBaseURL: ServiceEndpoints.attendanceAnalysisBaseURL(),
+        externalContextBaseURL: ServiceEndpoints.externalContextBaseURL()
     )
 
     try app.register(collection: controller)

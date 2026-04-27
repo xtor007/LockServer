@@ -30,6 +30,7 @@ stop_pid_file() {
 }
 
 stop_pid_file "$PID_DIR/api-gateway.pid"
+stop_pid_file "$PID_DIR/external-context-service.pid"
 stop_pid_file "$PID_DIR/attendance-analysis-service.pid"
 stop_pid_file "$PID_DIR/device-service.pid"
 stop_pid_file "$PID_DIR/access-service.pid"

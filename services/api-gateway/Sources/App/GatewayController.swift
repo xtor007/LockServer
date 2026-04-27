@@ -8,12 +8,20 @@ struct GatewayController: RouteCollection {
     private let directoryBaseURL: String
     private let accessBaseURL: String
     private let attendanceAnalysisBaseURL: String
+    private let externalContextBaseURL: String
 
-    init(authBaseURL: String, directoryBaseURL: String, accessBaseURL: String, attendanceAnalysisBaseURL: String) {
+    init(
+        authBaseURL: String,
+        directoryBaseURL: String,
+        accessBaseURL: String,
+        attendanceAnalysisBaseURL: String,
+        externalContextBaseURL: String
+    ) {
         self.authBaseURL = authBaseURL
         self.directoryBaseURL = directoryBaseURL
         self.accessBaseURL = accessBaseURL
         self.attendanceAnalysisBaseURL = attendanceAnalysisBaseURL
+        self.externalContextBaseURL = externalContextBaseURL
     }
 
     func boot(routes: RoutesBuilder) throws {
@@ -51,6 +59,10 @@ struct GatewayController: RouteCollection {
         attendanceAnalysis.get("users", ":id", "observations", use: getAttendanceObservations)
         attendanceAnalysis.get("users", ":id", "observations", ":day", use: getAttendanceObservation)
         attendanceAnalysis.get("users", ":id", "results", use: getAttendanceResults)
+
+        let externalContext = routes.grouped("internal", "external-context")
+        externalContext.get(":day", use: getExternalContextForDay)
+        externalContext.get(":day", ":factor", use: getExternalContextForFactor)
     }
 
     private func root(req: Request) -> String {
@@ -247,6 +259,17 @@ struct GatewayController: RouteCollection {
         let id = try req.parameters.require("id")
         return try await forwardAttendanceRequest(req, path: "/internal/attendance-analysis/users/\(id)/results")
     }
+
+    private func getExternalContextForDay(req: Request) async throws -> Response {
+        let day = try req.parameters.require("day")
+        return try await forwardExternalContextRequest(req, path: "/internal/external-context/\(day)")
+    }
+
+    private func getExternalContextForFactor(req: Request) async throws -> Response {
+        let day = try req.parameters.require("day")
+        let factor = try req.parameters.require("factor")
+        return try await forwardExternalContextRequest(req, path: "/internal/external-context/\(day)/\(factor)")
+    }
 }
 
 private extension GatewayController {
@@ -267,6 +290,10 @@ private extension GatewayController {
 
     func forwardAttendanceRequest(_ req: Request, path: String) async throws -> Response {
         try await forwardRequest(req, baseURL: attendanceAnalysisBaseURL, path: path)
+    }
+
+    func forwardExternalContextRequest(_ req: Request, path: String) async throws -> Response {
+        try await forwardRequest(req, baseURL: externalContextBaseURL, path: path)
     }
 
     func forwardRequest(_ req: Request, baseURL: String, path: String) async throws -> Response {

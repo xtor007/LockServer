@@ -88,6 +88,7 @@ start_service "directory-service" "DirectoryService"
 start_service "access-service" "AccessService"
 start_service "device-service" "DeviceService"
 start_service "attendance-analysis-service" "AttendanceAnalysisService"
+start_service "external-context-service" "ExternalContextService"
 start_service "api-gateway" "App"
 
 wait_for_url "http://127.0.0.1:${LOCKSERVER_AUTH_PORT}/validate"
@@ -95,8 +96,14 @@ wait_for_url "http://127.0.0.1:${LOCKSERVER_DIRECTORY_PORT}/validate"
 wait_for_url "http://127.0.0.1:${LOCKSERVER_ACCESS_PORT}/validate"
 wait_for_url "http://127.0.0.1:${LOCKSERVER_DEVICE_PORT}/validate"
 wait_for_url "http://127.0.0.1:${LOCKSERVER_ATTENDANCE_ANALYSIS_PORT}/validate"
+wait_for_url "http://127.0.0.1:${LOCKSERVER_EXTERNAL_CONTEXT_PORT}/validate"
 wait_for_url "http://127.0.0.1:${LOCKSERVER_GATEWAY_PORT}/validate"
-"$ROOT_DIR/infrastructure/local/materialize-attendance-analysis-fixture.sh" "$ENV_FILE"
+
+if [[ -n "${LOCKSERVER_EXTERNAL_CONTEXT_PTV_API_KEY:-}" ]]; then
+  echo "Skipping attendance-analysis fixture materialization because live PTV traffic is configured."
+else
+  "$ROOT_DIR/infrastructure/local/materialize-attendance-analysis-fixture.sh" "$ENV_FILE"
+fi
 
 echo "LockServer microservices are running."
 echo "Gateway: http://127.0.0.1:${LOCKSERVER_GATEWAY_PORT}"

@@ -1,8 +1,2 @@
 [ NOTICE ] Server started on http://127.0.0.1:8084
-[ INFO ] GET /validate [request-id: 493920B1-C2F7-40E9-86A4-1D7571407033]
-[ INFO ] GET /validate [request-id: 6D46BCB2-1A0E-449E-BE72-D9213C779A85]
-[ INFO ] POST /internal/device/open [request-id: B82780CD-F429-420A-A935-3E2332A86DF8]
-[ INFO ] GET /validate [request-id: 0C07C48F-6ED9-43C9-8B91-103D017189CF]
-[ INFO ] POST /internal/device/open [request-id: BD5D7123-6CDD-4BA0-AD08-6FA657AD7810]
-[ INFO ] GET /validate [request-id: 7B6EBA06-E0E8-4FAA-B2AA-DF04C9F02A48]
-[ INFO ] POST /internal/device/open [request-id: E608D073-E88B-4D12-9397-42C01000FFC2]
+[ INFO ] GET /validate [request-id: 3065D2F3-B47C-4A22-B63B-0752BC2B1D6E]

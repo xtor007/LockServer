@@ -104,6 +104,18 @@ let package = Package(
             path: "services/attendance-analysis-service/Sources/AttendanceAnalysisService",
             swiftSettings: swiftSettings
         ),
+        .executableTarget(
+            name: "ExternalContextService",
+            dependencies: [
+                .target(name: "LockServerContracts"),
+                .target(name: "LockServerCore"),
+                .product(name: "Vapor", package: "vapor"),
+                .product(name: "Fluent", package: "fluent"),
+                .product(name: "FluentMySQLDriver", package: "fluent-mysql-driver")
+            ],
+            path: "services/external-context-service/Sources/ExternalContextService",
+            swiftSettings: swiftSettings
+        ),
         .testTarget(
             name: "LockServerTests",
             dependencies: [
@@ -111,6 +123,7 @@ let package = Package(
                 .target(name: "AccessService"),
                 .target(name: "AttendanceAnalysisService"),
                 .target(name: "DeviceService"),
+                .target(name: "ExternalContextService"),
                 .target(name: "LockServerCore"),
                 .target(name: "LockServerContracts"),
                 .product(name: "XCTVapor", package: "vapor")
