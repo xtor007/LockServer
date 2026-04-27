@@ -29,6 +29,28 @@ stop_pid_file() {
   fi
 }
 
+stop_service_binary() {
+  local binary="$1"
+  local pattern="$ROOT_DIR/.build/.*/$binary serve --env development"
+  local pids
+
+  pids=("${(@f)$(pgrep -f "$pattern" || true)}")
+  for pid in "${pids[@]}"; do
+    if kill -0 "$pid" >/dev/null 2>&1; then
+      kill "$pid" >/dev/null 2>&1 || true
+    fi
+  done
+
+  sleep 1
+
+  pids=("${(@f)$(pgrep -f "$pattern" || true)}")
+  for pid in "${pids[@]}"; do
+    if kill -0 "$pid" >/dev/null 2>&1; then
+      kill -9 "$pid" >/dev/null 2>&1 || true
+    fi
+  done
+}
+
 stop_pid_file "$PID_DIR/api-gateway.pid"
 stop_pid_file "$PID_DIR/external-context-service.pid"
 stop_pid_file "$PID_DIR/attendance-analysis-service.pid"
@@ -36,6 +58,14 @@ stop_pid_file "$PID_DIR/device-service.pid"
 stop_pid_file "$PID_DIR/access-service.pid"
 stop_pid_file "$PID_DIR/directory-service.pid"
 stop_pid_file "$PID_DIR/auth-service.pid"
+
+stop_service_binary "App"
+stop_service_binary "ExternalContextService"
+stop_service_binary "AttendanceAnalysisService"
+stop_service_binary "DeviceService"
+stop_service_binary "AccessService"
+stop_service_binary "DirectoryService"
+stop_service_binary "AuthService"
 
 if [[ -f "$OWN_MYSQL_MARKER" && -f "$MYSQL_RUN_DIR/mysqld.pid" ]]; then
   MYSQL_PID="$(cat "$MYSQL_RUN_DIR/mysqld.pid")"

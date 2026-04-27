@@ -18,6 +18,10 @@
 - User:
   - email: `user@lock.local`
   - password: `user1234`
+- Attendance sample users:
+  - `attendance.normal@lock.local` / `normal1234`
+  - `attendance.short@lock.local` / `short1234`
+  - `attendance.night@lock.local` / `night1234`
 
 ## Local Run
 
@@ -28,6 +32,8 @@ cd /Users/khramchenko/Desktop/кпи/diplom/code/LockServer
 env HOME=/tmp/codex-home CLANG_MODULE_CACHE_PATH=/tmp/clang-module-cache swift build
 ./infrastructure/local/start-stack.sh
 ```
+
+The startup script resets `lockService` to a deterministic state, seeds the large attendance fixture, materializes observations and signals, and leaves all services running.
 
 Keep that terminal open. From a second terminal, verify all public routes through the gateway:
 
@@ -353,19 +359,23 @@ These routes must be verified through the gateway. The underlying attendance-ana
 ### Seeded Scenario Users
 
 - baseline window is `3`
-- `2026-04-06 ... 2026-04-08` are warmup days for seeded attendance users
-- `GET /internal/attendance-analysis/users/:id/results` returns `10` precomputed `signals_ready` rows for `2026-04-09 ... 2026-04-22`
-- `33333333-3333-3333-3333-333333333333` on `2026-04-22`: stable-history user, expected `signals_ready`, `historyDaysUsed = 3`, `F = 0`
-- `44444444-4444-4444-4444-444444444444` on `2026-04-22`: variable-start-time user, expected `signals_ready`, `sessionsCount = 2`, non-zero `stddevStartMinutes`
-- `55555555-5555-5555-5555-555555555555` on `2026-04-22`: repeated-deficit user, expected `signals_ready`, `historyDaysUsed = 3`, `F = 0.6667`
-- `66666666-6666-6666-6666-666666666666` on `2026-04-22`: valid early-shift user, expected `signals_ready` with empty `anomalyReasons`
-- `77777777-7777-7777-7777-777777777777` on `2026-04-22`: cross-midnight session, expected `workedMinutes = 225`, `historyDaysUsed = 3`, `F = 0`
-- `22222222-2222-2222-2222-222222222222` on `2026-04-22`: seeded regular user, expected `workedMinutes = 485`, `historyDaysUsed = 3`
+- clean local bootstrap creates exactly `1` admin and `1006` regular users
+- attendance history uses business days from `2025-06-02` through `2026-04-24`
+- `2025-06-02 ... 2025-06-04` are warmup days
+- `2025-06-05 ... 2026-04-24` are already materialized days
+- the fixed local fixture therefore contains `235` business days total and `232` persisted signal days per always-present user
+- regular-user norms include `240`, `360`, and `480` work minutes
+- `33333333-3333-3333-3333-333333333333` (`attendance.normal@lock.local`) on `2026-04-24`: stable office pattern, expected `signals_ready`, `historyDaysUsed = 3`, populated `Z_s`, `Z_t`, `F`, and full external context
+- `44444444-4444-4444-4444-444444444444` (`attendance.split@lock.local`) on generated history: split schedule with repeated multi-session days and non-zero breaks
+- `55555555-5555-5555-5555-555555555555` (`attendance.short@lock.local`) on generated history: `360`-minute norm, repeated mild deficits, at least one persisted row with `F > 0`
+- `66666666-6666-6666-6666-666666666666` (`attendance.broken@lock.local`) on generated history: `240`-minute norm, early-shift pattern with first-entry hours before `08:00`
+- `77777777-7777-7777-7777-777777777777` (`attendance.night@lock.local`) on generated history: cross-midnight security schedule with entry hours after `17:00`
+- `22222222-2222-2222-2222-222222222222` (`user@lock.local`) on generated history: flexible daytime schedule with card/finger access enabled
 
 ### Persistence Note
 
 - `GET /internal/attendance-analysis/users/:id/observations*` reads already persisted observation rows
-- local `./infrastructure/local/start-stack.sh` automatically materializes the seeded attendance fixture on startup
+- local `./infrastructure/local/start-stack.sh` automatically materializes the full large attendance fixture on startup
 - rows also appear after one of the trigger endpoints has been executed for that user/day or for all users of that day
 - `GET /internal/attendance-analysis/users/:id/results` reads only persisted `signals_ready` rows and returns stored baseline/core-signal fields
 
@@ -393,7 +403,7 @@ These routes must be verified through the gateway. The underlying attendance-ana
 ```json
 {
   "userId": "33333333-3333-3333-3333-333333333333",
-  "day": "2026-04-22"
+  "day": "2026-04-24"
 }
 ```
 
@@ -405,8 +415,8 @@ These routes must be verified through the gateway. The underlying attendance-ana
   "observation": {
     "id": "uuid",
     "userId": "33333333-3333-3333-3333-333333333333",
-    "day": "2026-04-22",
-    "firstEntryTime": "2026-04-22T09:00:00Z",
+    "day": "2026-04-24",
+    "firstEntryTime": "2026-04-24T09:00:00Z",
     "workedMinutes": 510,
     "breakMinutes": 0,
     "sessionsCount": 1,
@@ -418,7 +428,7 @@ These routes must be verified through the gateway. The underlying attendance-ana
   "result": {
     "id": "uuid",
     "userId": "33333333-3333-3333-3333-333333333333",
-    "day": "2026-04-22",
+    "day": "2026-04-24",
     "status": "signals_ready",
     "observationId": "uuid",
     "historyDaysUsed": 3,
@@ -435,19 +445,19 @@ These routes must be verified through the gateway. The underlying attendance-ana
       "rawEvents": [
         {
           "type": "enter",
-          "time": "2026-04-22T09:00:00Z"
+          "time": "2026-04-24T09:00:00Z"
         },
         {
           "type": "exit",
-          "time": "2026-04-22T17:30:00Z"
+          "time": "2026-04-24T17:30:00Z"
         }
       ],
       "sessionStartsCount": 1,
       "completedSessionsCount": 1,
       "sessionRanges": [
         {
-          "start": "2026-04-22T09:00:00Z",
-          "end": "2026-04-22T17:30:00Z",
+          "start": "2026-04-24T09:00:00Z",
+          "end": "2026-04-24T17:30:00Z",
           "workedMinutes": 510
         }
       ],
@@ -503,7 +513,7 @@ These routes must be verified through the gateway. The underlying attendance-ana
 
 ```json
 {
-  "day": "2026-04-22"
+  "day": "2026-04-24"
 }
 ```
 
@@ -523,13 +533,13 @@ These routes must be verified through the gateway. The underlying attendance-ana
 
 ```json
 {
-  "day": "2026-04-22"
+  "day": "2026-04-24"
 }
 ```
 
 - Notes:
   - rebuilds observations for all directory users for the requested day
-  - for `2026-04-22`, this includes the seeded user `22222222-2222-2222-2222-222222222222`
+  - for `2026-04-24`, this includes the seeded user `22222222-2222-2222-2222-222222222222`
   - overwrites already persisted rows for that day across all directory users
 
 ### `GET /internal/attendance-analysis/users/:id/observations`
@@ -548,8 +558,8 @@ These routes must be verified through the gateway. The underlying attendance-ana
     {
       "id": "uuid",
       "userId": "33333333-3333-3333-3333-333333333333",
-      "day": "2026-04-22",
-      "firstEntryTime": "2026-04-22T09:00:00Z",
+      "day": "2026-04-24",
+      "firstEntryTime": "2026-04-24T09:00:00Z",
       "workedMinutes": 510,
       "breakMinutes": 0,
       "sessionsCount": 1,
@@ -573,7 +583,7 @@ These routes must be verified through the gateway. The underlying attendance-ana
 - Example:
 
 ```http
-GET /internal/attendance-analysis/users/33333333-3333-3333-3333-333333333333/observations/2026-04-22
+GET /internal/attendance-analysis/users/33333333-3333-3333-3333-333333333333/observations/2026-04-24
 ```
 
 ### `GET /internal/attendance-analysis/users/:id/results`
@@ -592,7 +602,7 @@ GET /internal/attendance-analysis/users/33333333-3333-3333-3333-333333333333/obs
     {
       "id": "uuid",
       "userId": "33333333-3333-3333-3333-333333333333",
-      "day": "2026-04-22",
+      "day": "2026-04-24",
       "status": "signals_ready",
       "observationId": "uuid",
       "historyDaysUsed": 3,

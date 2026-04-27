@@ -13,7 +13,8 @@ func configure(_ app: Application) async throws {
 
     let trafficProvider = try EnvironmentValue.string("LOCKSERVER_EXTERNAL_CONTEXT_PTV_API_KEY", default: "")
         .trimmingCharacters(in: .whitespacesAndNewlines)
-    let trafficFallbackMode = try EnvironmentValue.string("LOCKSERVER_EXTERNAL_CONTEXT_TRAFFIC_FALLBACK_MODE", default: "disabled")
+        .replacingOccurrences(of: "change-me", with: "")
+    let trafficFallbackMode = try EnvironmentValue.string("LOCKSERVER_EXTERNAL_CONTEXT_TRAFFIC_FALLBACK_MODE", default: "fixture_when_unavailable")
         .trimmingCharacters(in: .whitespacesAndNewlines)
         .lowercased()
     let powerMode = try EnvironmentValue.string("LOCKSERVER_EXTERNAL_CONTEXT_POWER_MODE", default: "official_channel")
@@ -40,7 +41,9 @@ func configure(_ app: Application) async throws {
             : OpenMeteoWeatherProviderClient(client: app.client, configuration: .kyivDefault),
         trafficFallbackMode: trafficFallbackMode == "fixture_when_unavailable"
             ? .fixtureWhenUnavailable
-            : .disabled
+            : .disabled,
+        powerFallbackEnabled: powerMode != "disabled",
+        weatherFallbackEnabled: weatherMode != "disabled"
     )
     let authClient = AttendanceAuthServiceClient(client: app.client, baseURL: try ServiceEndpoints.authBaseURL())
 

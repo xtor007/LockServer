@@ -1,12 +1,14 @@
 import Fluent
 import LockServerContracts
 import LockServerCore
+import SQLKit
 import Vapor
 
 struct AccessController: RouteCollection {
     private let directoryClient: DirectoryServiceClient
     private let deviceClient: DeviceServiceClient
     private let eventRecorder: DomainEventRecorder
+    private let statisticsAggregator = AccessStatisticsAggregator()
 
     init(directoryClient: DirectoryServiceClient, deviceClient: DeviceServiceClient, eventRecorder: DomainEventRecorder) {
         self.directoryClient = directoryClient
@@ -91,15 +93,18 @@ struct AccessController: RouteCollection {
         }
 
         let employers = try await directoryClient.employers()
-        var result = [EmployerWithStatistic]()
+        let statisticsByEmployer = try await allStatistics(on: req.db)
 
-        for employer in employers {
+        let result = employers.compactMap { employer -> EmployerWithStatistic? in
             guard let employerID = employer.id else {
-                continue
+                return nil
             }
-            let logs = try await logs(for: employerID, after: nil, on: req.db)
-            let statistic = Statistic(averageTime: StatisticCalculator(enters: logs).averageTime)
-            result.append(EmployerWithStatistic(employer: employer, statistic: statistic))
+
+            let averageTime = statisticsByEmployer[employerID] ?? 0
+            return EmployerWithStatistic(
+                employer: employer,
+                statistic: Statistic(averageTime: averageTime)
+            )
         }
 
         return Employers(employers: result)
@@ -164,4 +169,81 @@ private extension AccessController {
             EnterModel(isOn: $0.isOn, time: $0.time)
         }
     }
+
+    func allStatistics(on database: Database) async throws -> [UUID: Double] {
+        if let sqlDatabase = database as? any SQLDatabase {
+            do {
+                return try await queryStatistics(on: sqlDatabase)
+            } catch {
+                database.logger.warning("Falling back to in-memory access statistics aggregation: \(error)")
+            }
+        }
+
+        let enters = try await AccessEnter.query(on: database)
+            .sort(\.$employerID, .ascending)
+            .sort(\.$time, .ascending)
+            .all()
+
+        return statisticsAggregator.averageTimes(for: enters)
+    }
+
+    func queryStatistics(on database: any SQLDatabase) async throws -> [UUID: Double] {
+        let rows = try await database.raw(
+            """
+            WITH ordered_events AS (
+                SELECT
+                    employer_id,
+                    time,
+                    is_on,
+                    LAG(time) OVER (PARTITION BY employer_id ORDER BY time) AS previous_time,
+                    LAG(is_on) OVER (PARTITION BY employer_id ORDER BY time) AS previous_is_on
+                FROM access_enters
+            ),
+            daily_work AS (
+                SELECT
+                    employer_id,
+                    DATE(previous_time) AS work_day,
+                    SUM(TIMESTAMPDIFF(SECOND, previous_time, time)) / 3600.0 AS worked_hours
+                FROM ordered_events
+                WHERE is_on = 0
+                  AND previous_is_on = 1
+                GROUP BY employer_id, DATE(previous_time)
+            ),
+            entered_days AS (
+                SELECT
+                    employer_id,
+                    DATE(time) AS work_day
+                FROM access_enters
+                WHERE is_on = 1
+                GROUP BY employer_id, DATE(time)
+            )
+            SELECT
+                BIN_TO_UUID(entered_days.employer_id) AS employerID,
+                COALESCE(SUM(COALESCE(daily_work.worked_hours, 0)) / NULLIF(COUNT(*), 0), 0) AS averageTime
+            FROM entered_days
+            LEFT JOIN daily_work
+                ON daily_work.employer_id = entered_days.employer_id
+               AND daily_work.work_day = entered_days.work_day
+            GROUP BY entered_days.employer_id
+            """
+        ).all(decoding: EmployerAverageTimeRow.self)
+
+        var statisticsByEmployer = [UUID: Double]()
+        statisticsByEmployer.reserveCapacity(rows.count)
+
+        for row in rows {
+            guard let employerID = UUID(uuidString: row.employerID) else {
+                throw Abort(.internalServerError, reason: "Invalid employer ID in aggregated access statistics result")
+            }
+
+            statisticsByEmployer[employerID] = row.averageTime
+        }
+
+        return statisticsByEmployer
+    }
+}
+
+private struct EmployerAverageTimeRow: Decodable {
+    let employerID: String
+    let averageTime: Double
 }

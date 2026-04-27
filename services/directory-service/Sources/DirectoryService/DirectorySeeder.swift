@@ -3,50 +3,36 @@ import LockServerCore
 
 enum DirectorySeeder {
     static func seed(on database: Database) async throws {
-        for seedUser in SeedUsers.all {
-            let employer: DirectoryEmployer
-            if let existing = try await DirectoryEmployer.find(seedUser.id, on: database) {
-                existing.name = seedUser.name
-                existing.surname = seedUser.surname
-                existing.department = seedUser.department
-                existing.email = seedUser.email
-                existing.isAdmin = seedUser.isAdmin
-                existing.workNormMinutes = seedUser.workNormMinutes
-                try await existing.update(on: database)
-                employer = existing
-            } else {
-                let newEmployer = DirectoryEmployer(
-                    id: seedUser.id,
-                    name: seedUser.name,
-                    surname: seedUser.surname,
-                    department: seedUser.department,
-                    email: seedUser.email,
-                    isAdmin: seedUser.isAdmin,
-                    workNormMinutes: seedUser.workNormMinutes
-                )
-                try await newEmployer.create(on: database)
-                employer = newEmployer
-            }
-
-            if let cardCode = seedUser.cardCode {
-                let existingCard = try await DirectoryCard.query(on: database)
-                    .filter(\.$code == cardCode)
-                    .first()
-                if existingCard == nil, let employerID = employer.id {
-                    let card = DirectoryCard(hash: CardCodeHasher.hash(cardCode), code: cardCode, employerID: employerID)
-                    try await card.create(on: database)
-                }
-            }
-
-            if let fingerCode = seedUser.fingerCode {
-                let existingFinger = try await DirectoryFinger.query(on: database)
-                    .filter(\.$code == fingerCode)
-                    .first()
-                if existingFinger == nil, let employerID = employer.id {
-                    let finger = DirectoryFinger(code: fingerCode, employerID: employerID)
-                    try await finger.create(on: database)
-                }
-            }
+        guard try await DirectoryEmployer.query(on: database).count() == 0 else {
+            return
         }
+
+        try await SeedUsers.all.map {
+            DirectoryEmployer(
+                id: $0.id,
+                name: $0.name,
+                surname: $0.surname,
+                department: $0.department,
+                email: $0.email,
+                isAdmin: $0.isAdmin,
+                workNormMinutes: $0.workNormMinutes
+            )
+        }.create(on: database)
+
+        let cards = SeedUsers.all.compactMap { seedUser -> DirectoryCard? in
+            guard let cardCode = seedUser.cardCode else {
+                return nil
+            }
+            return DirectoryCard(hash: CardCodeHasher.hash(cardCode), code: cardCode, employerID: seedUser.id)
+        }
+        try await cards.create(on: database)
+
+        let fingers = SeedUsers.all.compactMap { seedUser -> DirectoryFinger? in
+            guard let fingerCode = seedUser.fingerCode else {
+                return nil
+            }
+            return DirectoryFinger(code: fingerCode, employerID: seedUser.id)
+        }
+        try await fingers.create(on: database)
     }
 }

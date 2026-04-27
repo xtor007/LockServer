@@ -3,19 +3,14 @@ import LockServerCore
 
 enum AccessSeeder {
     static func seed(on database: Database) async throws {
-        for entry in SeedUsers.accessEntries {
-            let existingEntry = try await AccessEnter.query(on: database)
-                .filter(\.$employerID == entry.employerID)
-                .filter(\.$time == entry.time)
-                .filter(\.$isOn == entry.isOn)
-                .first()
+        guard try await AccessEnter.query(on: database).count() == 0 else {
+            return
+        }
 
-            guard existingEntry == nil else {
-                continue
-            }
-
-            let accessEntry = AccessEnter(employerID: entry.employerID, time: entry.time, isOn: entry.isOn)
-            try await accessEntry.create(on: database)
+        for chunk in SeedUsers.accessEntries.chunked(into: 1_000) {
+            try await chunk.map {
+                AccessEnter(employerID: $0.employerID, time: $0.time, isOn: $0.isOn)
+            }.create(on: database)
         }
     }
 }

@@ -1,7 +1,12 @@
 import Logging
 import Vapor
 
-var environment = try Environment.detect()
+let isFixtureMaterializationCommand = ProcessInfo.processInfo.arguments.dropFirst().first == "materialize-fixture"
+let environmentArguments = isFixtureMaterializationCommand
+    ? [ProcessInfo.processInfo.arguments[0]] + Array(ProcessInfo.processInfo.arguments.dropFirst(2))
+    : ProcessInfo.processInfo.arguments
+
+var environment = try Environment.detect(arguments: environmentArguments)
 try LoggingSystem.bootstrap(from: &environment)
 
 let app = Application(environment)
@@ -14,4 +19,10 @@ do {
     throw error
 }
 
-try await app.execute()
+if isFixtureMaterializationCommand {
+    let summary = try await makeAttendanceFixtureMaterializer(app).materialize(on: app.db)
+    print("Attendance fixture materialized for \(summary.regularUserCount) regular users across \(summary.fixtureDayCount) fixture days.")
+    print("Observations: \(summary.observationCount), results: \(summary.resultCount), signals_ready: \(summary.signalsReadyCount), external-context days: \(summary.contextDayCount).")
+} else {
+    try await app.execute()
+}

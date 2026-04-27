@@ -18,48 +18,20 @@ source "$ENV_FILE"
 set +a
 
 GATEWAY_URL="http://127.0.0.1:${LOCKSERVER_GATEWAY_PORT}"
-ATTENDANCE_GATEWAY_URL="$GATEWAY_URL/internal/attendance-analysis"
-ATTENDANCE_FIXTURE_DAYS=(
-  "2026-04-06"
-  "2026-04-07"
-  "2026-04-08"
-  "2026-04-09"
-  "2026-04-10"
-  "2026-04-13"
-  "2026-04-14"
-  "2026-04-15"
-  "2026-04-16"
-  "2026-04-17"
-  "2026-04-20"
-  "2026-04-21"
-  "2026-04-22"
-)
-CURRENT_UTC_DAY="$(date -u +%F)"
-CURRENT_DAY_TRIGGER_USER_ID="11111111-1111-1111-1111-111111111111"
+ROOT_BUILD_DIR="$ROOT_DIR"
+
+echo "Materializing attendance-analysis fixture..."
+env HOME=/tmp/codex-home CLANG_MODULE_CACHE_PATH=/tmp/clang-module-cache swift build >/dev/null
+BIN_DIR="$(env HOME=/tmp/codex-home CLANG_MODULE_CACHE_PATH=/tmp/clang-module-cache swift build --show-bin-path)"
+"$BIN_DIR/AttendanceAnalysisService" materialize-fixture --env development >/dev/null
 
 ADMIN_TOKEN="$(curl -sS -u admin@lock.local:admin1234 "$GATEWAY_URL/auth/getToken" | jq -r '.auth')"
 if [[ -z "$ADMIN_TOKEN" || "$ADMIN_TOKEN" == "null" ]]; then
-  echo "Failed to obtain admin token for attendance materialization."
+  echo "Failed to obtain admin token for attendance materialization verification."
   exit 1
 fi
 
-echo "Materializing attendance-analysis fixture..."
-for day in "${ATTENDANCE_FIXTURE_DAYS[@]}"; do
-  curl -sS -X POST \
-    -H "Authorization: Bearer $ADMIN_TOKEN" \
-    -H "Content-Type: application/json" \
-    -d "{\"day\":\"$day\"}" \
-    "$ATTENDANCE_GATEWAY_URL/observations/rebuild-all" \
-    | jq -e --arg day "$day" '.day == $day and .processedCount >= 7 and (.items | all(.status == "signals_ready" or .status == "insufficient_history"))' >/dev/null
-done
-
-if [[ ! " ${ATTENDANCE_FIXTURE_DAYS[*]} " =~ " ${CURRENT_UTC_DAY} " ]]; then
-  curl -sS -X POST \
-    -H "Authorization: Bearer $ADMIN_TOKEN" \
-    -H "Content-Type: application/json" \
-    -d "{\"userId\":\"$CURRENT_DAY_TRIGGER_USER_ID\",\"day\":\"$CURRENT_UTC_DAY\"}" \
-    "$ATTENDANCE_GATEWAY_URL/observations/rebuild" \
-    | jq -e --arg day "$CURRENT_UTC_DAY" --arg userId "$CURRENT_DAY_TRIGGER_USER_ID" '.result.userId == $userId and .result.day == $day and .observation != null and (.status == "signals_ready" or .status == "insufficient_history")' >/dev/null
-fi
+curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$GATEWAY_URL/internal/attendance-analysis/users/33333333-3333-3333-3333-333333333333/results" \
+  | jq -e '.results | length >= 200 and all(.status == "signals_ready")' >/dev/null
 
 echo "Attendance-analysis fixture is materialized."

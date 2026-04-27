@@ -9,6 +9,8 @@ struct ExternalContextManager {
     private let powerProvider: DTEKCityPowerProviderClient?
     private let weatherProvider: OpenMeteoWeatherProviderClient?
     private let trafficFallbackMode: TrafficFallbackMode
+    private let powerFallbackEnabled: Bool
+    private let weatherFallbackEnabled: Bool
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
@@ -17,13 +19,17 @@ struct ExternalContextManager {
         trafficProvider: PTVTrafficProviderClient?,
         powerProvider: DTEKCityPowerProviderClient?,
         weatherProvider: OpenMeteoWeatherProviderClient?,
-        trafficFallbackMode: TrafficFallbackMode
+        trafficFallbackMode: TrafficFallbackMode,
+        powerFallbackEnabled: Bool,
+        weatherFallbackEnabled: Bool
     ) {
         self.airAlertsProvider = airAlertsProvider
         self.trafficProvider = trafficProvider
         self.powerProvider = powerProvider
         self.weatherProvider = weatherProvider
         self.trafficFallbackMode = trafficFallbackMode
+        self.powerFallbackEnabled = powerFallbackEnabled
+        self.weatherFallbackEnabled = weatherFallbackEnabled
 
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -198,35 +204,83 @@ extension ExternalContextManager {
             return resolvedValue
         }
 
-        guard let powerProvider else {
-            throw Abort(.serviceUnavailable, reason: "DTEK power provider is not configured")
-        }
-
-        let rawEnvelope = decodePowerRawEnvelope(existing?.rawPayloadJson)
+        let sourceAggregate: PowerSourceAggregate
+        let resolvedValue: PowerContextResolvedValue
+        let sourceName: String
+        let sourceURL: String
+        let fetchStatus: ExternalContextFetchStatus
         let signals: [DTEKPowerCitySignal]
         let fetchedAt: Date?
-        let shouldRefetchSignals = rawEnvelope.signals.isEmpty || existing?.sourceName != powerSourceName
 
-        if shouldRefetchSignals {
-            let fetchOutput = try await powerProvider.fetchKyivSignals()
-            signals = fetchOutput.signals
+        if day != ExternalContextDay(date: Date()) {
+            guard powerFallbackEnabled else {
+                throw Abort(.serviceUnavailable, reason: "Historical power fallback is disabled")
+            }
+
+            sourceAggregate = PowerContextFallback.makeSourceAggregate(for: arrivalTime)
+            resolvedValue = PowerContextAggregator.makeResolvedValue(sourceAggregate: sourceAggregate)
+            sourceName = powerFallbackSourceName
+            sourceURL = powerFallbackSourceURL
+            fetchStatus = .cached
+            signals = [PowerContextFallback.makeSignal(for: arrivalTime)]
             fetchedAt = Date()
-        } else {
-            signals = rawEnvelope.signals
-            fetchedAt = nil
-        }
+        } else if let powerProvider {
+            do {
+                let rawEnvelope = decodePowerRawEnvelope(existing?.rawPayloadJson)
+                let shouldRefetchSignals = rawEnvelope.signals.isEmpty || existing?.sourceName != powerSourceName
 
-        let sourceAggregate = PowerContextAggregator.makeSourceAggregate(
-            arrivalTime: arrivalTime,
-            maxSignalAgeHours: powerMaxSignalAgeHours,
-            signals: signals
-        )
-        let resolvedValue = PowerContextAggregator.makeResolvedValue(sourceAggregate: sourceAggregate)
+                if shouldRefetchSignals {
+                    let fetchOutput = try await powerProvider.fetchKyivSignals()
+                    signals = fetchOutput.signals
+                    fetchedAt = Date()
+                } else {
+                    signals = rawEnvelope.signals
+                    fetchedAt = nil
+                }
+
+                sourceAggregate = PowerContextAggregator.makeSourceAggregate(
+                    arrivalTime: arrivalTime,
+                    maxSignalAgeHours: powerMaxSignalAgeHours,
+                    signals: signals
+                )
+                resolvedValue = PowerContextAggregator.makeResolvedValue(sourceAggregate: sourceAggregate)
+                sourceName = powerSourceName
+                sourceURL = powerSourceURL
+                fetchStatus = .fetched
+            } catch {
+                guard powerFallbackEnabled else {
+                    throw error
+                }
+
+                sourceAggregate = PowerContextFallback.makeSourceAggregate(for: arrivalTime)
+                resolvedValue = PowerContextAggregator.makeResolvedValue(sourceAggregate: sourceAggregate)
+                sourceName = powerFallbackSourceName
+                sourceURL = powerFallbackSourceURL
+                fetchStatus = .cached
+                signals = [PowerContextFallback.makeSignal(for: arrivalTime)]
+                fetchedAt = Date()
+            }
+        } else {
+            guard powerFallbackEnabled else {
+                throw Abort(.serviceUnavailable, reason: "DTEK power provider is not configured")
+            }
+
+            sourceAggregate = PowerContextFallback.makeSourceAggregate(for: arrivalTime)
+            resolvedValue = PowerContextAggregator.makeResolvedValue(sourceAggregate: sourceAggregate)
+            sourceName = powerFallbackSourceName
+            sourceURL = powerFallbackSourceURL
+            fetchStatus = .cached
+            signals = [PowerContextFallback.makeSignal(for: arrivalTime)]
+            fetchedAt = Date()
+        }
 
         _ = try await upsertPowerEntry(
             existing: existing,
             day: day,
             city: city,
+            sourceName: sourceName,
+            sourceURL: sourceURL,
+            fetchStatus: fetchStatus,
             signals: signals,
             bucketKey: bucketKey,
             sourceAggregate: sourceAggregate,
@@ -251,38 +305,72 @@ extension ExternalContextManager {
             return resolvedValue
         }
 
-        guard let weatherProvider else {
-            throw Abort(.serviceUnavailable, reason: "Open-Meteo weather provider is not configured")
-        }
+        var rawPayload: OpenMeteoWeatherRawPayload
+        var sourceAggregate: WeatherSourceAggregate
+        var resolvedValue: WeatherContextResolvedValue
+        var sourceURL: String
+        var sourceName: String
+        var fetchStatus: ExternalContextFetchStatus
+        var fetchedAt: Date?
 
-        let rawEnvelope = decodeWeatherRawEnvelope(existing?.rawPayloadJson)
-        let rawPayload: OpenMeteoWeatherRawPayload
-        let sourceURL: String
-        let fetchedAt: Date?
+        if let weatherProvider {
+            do {
+                let rawEnvelope = decodeWeatherRawEnvelope(existing?.rawPayloadJson)
+                if let cachedPayload = rawEnvelope.payload, cachedPayload.day == day.stringValue {
+                    rawPayload = cachedPayload
+                    sourceURL = existing?.sourceURL ?? weatherDefaultSourceURL(for: day)
+                    fetchedAt = nil
+                } else {
+                    let fetchOutput = try await weatherProvider.fetchWeather(for: day)
+                    rawPayload = fetchOutput.rawPayload
+                    sourceURL = fetchOutput.sourceURL
+                    fetchedAt = Date()
+                }
 
-        if let cachedPayload = rawEnvelope.payload, cachedPayload.day == day.stringValue {
-            rawPayload = cachedPayload
-            sourceURL = existing?.sourceURL ?? weatherDefaultSourceURL(for: day)
-            fetchedAt = nil
+                guard let sourceSnapshot = weatherSnapshot(from: rawPayload, for: observationTime) else {
+                    throw Abort(.badGateway, reason: "Open-Meteo weather response does not contain requested hour-before-arrival bucket")
+                }
+                sourceAggregate = WeatherContextAggregator.makeSourceAggregate(snapshot: sourceSnapshot)
+                resolvedValue = WeatherContextAggregator.makeResolvedValue(sourceAggregate: sourceAggregate)
+                sourceName = weatherSourceName
+                fetchStatus = .fetched
+            } catch {
+                guard weatherFallbackEnabled else {
+                    throw error
+                }
+
+                let fallback = WeatherContextFallback.makeOutput(for: day, arrivalTime: arrivalTime)
+                rawPayload = fallback.rawPayload
+                sourceAggregate = fallback.sourceAggregate
+                resolvedValue = fallback.resolvedValue
+                sourceURL = weatherFallbackSourceURL
+                sourceName = weatherFallbackSourceName
+                fetchStatus = .cached
+                fetchedAt = Date()
+            }
         } else {
-            let fetchOutput = try await weatherProvider.fetchWeather(for: day)
-            rawPayload = fetchOutput.rawPayload
-            sourceURL = fetchOutput.sourceURL
+            guard weatherFallbackEnabled else {
+                throw Abort(.serviceUnavailable, reason: "Open-Meteo weather provider is not configured")
+            }
+
+            let fallback = WeatherContextFallback.makeOutput(for: day, arrivalTime: arrivalTime)
+            rawPayload = fallback.rawPayload
+            sourceAggregate = fallback.sourceAggregate
+            resolvedValue = fallback.resolvedValue
+            sourceURL = weatherFallbackSourceURL
+            sourceName = weatherFallbackSourceName
+            fetchStatus = .cached
             fetchedAt = Date()
         }
-
-        guard let sourceSnapshot = weatherSnapshot(from: rawPayload, for: observationTime) else {
-            throw Abort(.badGateway, reason: "Open-Meteo weather response does not contain requested hour-before-arrival bucket")
-        }
-        let sourceAggregate = WeatherContextAggregator.makeSourceAggregate(snapshot: sourceSnapshot)
-        let resolvedValue = WeatherContextAggregator.makeResolvedValue(sourceAggregate: sourceAggregate)
 
         _ = try await upsertWeatherEntry(
             existing: existing,
             day: day,
             city: city,
+            sourceName: sourceName,
             rawPayload: rawPayload,
             sourceURL: sourceURL,
+            fetchStatus: fetchStatus,
             bucketKey: bucketKey,
             sourceAggregate: sourceAggregate,
             resolvedValue: resolvedValue,
@@ -335,6 +423,14 @@ private extension ExternalContextManager {
         DTEKCityPowerConfiguration.kyivDefault.sourceURL
     }
 
+    var powerFallbackSourceName: String {
+        "kyiv-power-fixture"
+    }
+
+    var powerFallbackSourceURL: String {
+        "fixture://power/kyiv-history"
+    }
+
     var powerProviderCity: String {
         DTEKCityPowerConfiguration.kyivDefault.city
     }
@@ -345,6 +441,14 @@ private extension ExternalContextManager {
 
     var weatherSourceName: String {
         OpenMeteoWeatherConfiguration.kyivDefault.sourceName
+    }
+
+    var weatherFallbackSourceName: String {
+        "open-meteo-weather-fixture"
+    }
+
+    var weatherFallbackSourceURL: String {
+        "fixture://weather/kyiv-history"
     }
 
     var weatherProviderCity: String {
@@ -537,6 +641,9 @@ private extension ExternalContextManager {
         existing: ExternalContextCache?,
         day: ExternalContextDay,
         city: String,
+        sourceName: String,
+        sourceURL: String,
+        fetchStatus: ExternalContextFetchStatus,
         signals: [DTEKPowerCitySignal],
         bucketKey: String,
         sourceAggregate: PowerSourceAggregate,
@@ -557,9 +664,9 @@ private extension ExternalContextManager {
         let sourceUpdatedAt = signals.map(\.publishedAt).max() ?? sourceAggregate.signalPublishedAt
 
         if let existing {
-            existing.sourceName = powerSourceName
-            existing.sourceURL = powerSourceURL
-            existing.fetchStatus = ExternalContextFetchStatus.fetched.rawValue
+            existing.sourceName = sourceName
+            existing.sourceURL = sourceURL
+            existing.fetchStatus = fetchStatus.rawValue
             existing.rawPayloadJson = rawPayloadJson
             existing.parsedPayloadJson = parsedPayloadJson
             existing.resolvedValueJson = resolvedValueJson
@@ -573,9 +680,9 @@ private extension ExternalContextManager {
             factor: ExternalContextFactor.powerAvailability.rawValue,
             day: day.startOfDay,
             city: city,
-            sourceName: powerSourceName,
-            sourceURL: powerSourceURL,
-            fetchStatus: ExternalContextFetchStatus.fetched.rawValue,
+            sourceName: sourceName,
+            sourceURL: sourceURL,
+            fetchStatus: fetchStatus.rawValue,
             rawPayloadJson: rawPayloadJson,
             parsedPayloadJson: parsedPayloadJson,
             resolvedValueJson: resolvedValueJson,
@@ -590,8 +697,10 @@ private extension ExternalContextManager {
         existing: ExternalContextCache?,
         day: ExternalContextDay,
         city: String,
+        sourceName: String,
         rawPayload: OpenMeteoWeatherRawPayload,
         sourceURL: String,
+        fetchStatus: ExternalContextFetchStatus,
         bucketKey: String,
         sourceAggregate: WeatherSourceAggregate,
         resolvedValue: WeatherContextResolvedValue,
@@ -610,9 +719,9 @@ private extension ExternalContextManager {
         let resolvedValueJson = try encode(resolvedEnvelope)
 
         if let existing {
-            existing.sourceName = weatherSourceName
+            existing.sourceName = sourceName
             existing.sourceURL = sourceURL
-            existing.fetchStatus = ExternalContextFetchStatus.fetched.rawValue
+            existing.fetchStatus = fetchStatus.rawValue
             existing.rawPayloadJson = rawPayloadJson
             existing.parsedPayloadJson = parsedPayloadJson
             existing.resolvedValueJson = resolvedValueJson
@@ -626,9 +735,9 @@ private extension ExternalContextManager {
             factor: ExternalContextFactor.weather.rawValue,
             day: day.startOfDay,
             city: city,
-            sourceName: weatherSourceName,
+            sourceName: sourceName,
             sourceURL: sourceURL,
-            fetchStatus: ExternalContextFetchStatus.fetched.rawValue,
+            fetchStatus: fetchStatus.rawValue,
             rawPayloadJson: rawPayloadJson,
             parsedPayloadJson: parsedPayloadJson,
             resolvedValueJson: resolvedValueJson,

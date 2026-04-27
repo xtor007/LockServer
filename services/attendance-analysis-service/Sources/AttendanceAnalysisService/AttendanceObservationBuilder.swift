@@ -2,14 +2,32 @@ import Foundation
 import LockServerContracts
 
 struct AttendanceObservationBuilder {
+    struct PreparedLogs {
+        fileprivate var rawEventsByDay: [AttendanceDay: [AttendanceDebugEvent]] = [:]
+        fileprivate var sessionStartsByDay: [AttendanceDay: [Date]] = [:]
+        fileprivate var sessionsByDay: [AttendanceDay: [AttendanceDebugSession]] = [:]
+        fileprivate var anomalyReasonsByDay: [AttendanceDay: [String]] = [:]
+    }
+
     private let maximumSessionMinutes = 16 * 60
 
     func build(for day: AttendanceDay, logs: [EnterModel], workNormMinutes: Int) -> AttendanceObservationBuildOutcome {
-        let parsed = parse(logs)
-        let rawEvents = parsed.rawEventsByDay[day] ?? []
-        let sessionStarts = parsed.sessionStartsByDay[day] ?? []
-        let sessions = (parsed.sessionsByDay[day] ?? []).sorted { $0.start < $1.start }
-        let anomalyReasons = unique(parsed.anomalyReasonsByDay[day] ?? [])
+        build(for: day, preparedLogs: prepare(logs), workNormMinutes: workNormMinutes)
+    }
+
+    func prepare(_ logs: [EnterModel]) -> PreparedLogs {
+        parse(logs)
+    }
+
+    func build(
+        for day: AttendanceDay,
+        preparedLogs: PreparedLogs,
+        workNormMinutes: Int
+    ) -> AttendanceObservationBuildOutcome {
+        let rawEvents = preparedLogs.rawEventsByDay[day] ?? []
+        let sessionStarts = preparedLogs.sessionStartsByDay[day] ?? []
+        let sessions = preparedLogs.sessionsByDay[day] ?? []
+        let anomalyReasons = unique(preparedLogs.anomalyReasonsByDay[day] ?? [])
 
         guard !rawEvents.isEmpty || !sessionStarts.isEmpty || !sessions.isEmpty || !anomalyReasons.isEmpty else {
             return AttendanceObservationBuildOutcome(
@@ -41,7 +59,7 @@ struct AttendanceObservationBuilder {
 
         let workedMinutes = sessions.reduce(0) { $0 + $1.workedMinutes }
         let breakMinutes = calculateBreakMinutes(for: sessions)
-        let firstEntryTime = sessionStarts.min()
+        let firstEntryTime = sessionStarts.first
         let observation = AttendanceObservationDraft(
             userId: UUID(),
             day: day,
@@ -82,15 +100,8 @@ struct AttendanceObservationBuilder {
 }
 
 private extension AttendanceObservationBuilder {
-    struct ParsedLogs {
-        var rawEventsByDay: [AttendanceDay: [AttendanceDebugEvent]] = [:]
-        var sessionStartsByDay: [AttendanceDay: [Date]] = [:]
-        var sessionsByDay: [AttendanceDay: [AttendanceDebugSession]] = [:]
-        var anomalyReasonsByDay: [AttendanceDay: [String]] = [:]
-    }
-
-    func parse(_ logs: [EnterModel]) -> ParsedLogs {
-        var parsed = ParsedLogs()
+    func parse(_ logs: [EnterModel]) -> PreparedLogs {
+        var parsed = PreparedLogs()
         let sortedLogs = logs.sorted { $0.time < $1.time }
         var openStart: Date?
 
@@ -138,7 +149,7 @@ private extension AttendanceObservationBuilder {
         return parsed
     }
 
-    func addAnomaly(_ reason: String, for day: AttendanceDay, to parsed: inout ParsedLogs) {
+    func addAnomaly(_ reason: String, for day: AttendanceDay, to parsed: inout PreparedLogs) {
         parsed.anomalyReasonsByDay[day, default: []].append(reason)
     }
 

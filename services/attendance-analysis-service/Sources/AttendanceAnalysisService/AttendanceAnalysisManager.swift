@@ -72,7 +72,7 @@ struct AttendanceAnalysisManager {
         let day = try AttendanceDay(dayString)
         let employers = try await directoryClient.employers()
             .compactMap { employer -> EmployerModel? in
-                guard employer.id != nil else {
+                guard employer.id != nil, employer.isAdmin == false else {
                     return nil
                 }
                 return employer
