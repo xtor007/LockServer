@@ -77,6 +77,14 @@ Run retraining and persist a new artifact version:
 python3 /Users/khramchenko/Desktop/кпи/diplom/code/LockServer/services/attendance-analysis-service/mlp/train_attendance_mlp.py retrain
 ```
 
+Accepted feedback samples are not merged into validation or test.
+
+- fixed base dataset:
+  - still owns the deterministic `70/10/20` split
+- accepted feedback:
+  - is appended only to the training side during automatic retraining
+  - never rewrites the fixed validation/test comparison slices
+
 Convenience wrapper for repeated offline retraining:
 
 ```bash

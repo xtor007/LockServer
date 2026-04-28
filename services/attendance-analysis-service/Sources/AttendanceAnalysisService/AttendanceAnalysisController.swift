@@ -20,6 +20,7 @@ struct AttendanceAnalysisController: RouteCollection {
         attendanceAnalysis.post("clustering", "rebuild", use: rebuildClustering)
         attendanceAnalysis.post("mlp", "run", use: runMLP)
         attendanceAnalysis.post("mlp", "rebuild", use: rebuildMLP)
+        attendanceAnalysis.post("mlp", "feedback", use: submitMLPFeedback)
         attendanceAnalysis.get("users", ":id", "observations", use: getObservations)
         attendanceAnalysis.get("users", ":id", "observations", ":day", use: getObservation)
         attendanceAnalysis.get("users", ":id", "results", use: getResults)
@@ -95,6 +96,20 @@ struct AttendanceAnalysisController: RouteCollection {
         }
         let payload = try req.content.decode(AttendanceMLPCommandRequest.self)
         return try await manager.runMLP(dayString: payload.day, userId: payload.userId, rebuild: true, on: req.db)
+    }
+
+    private func submitMLPFeedback(req: Request) async throws -> AttendanceMLPFeedbackResponse {
+        let context = try await authClient.authenticatedContext(headers: req.headers)
+        guard context.isAdmin else {
+            throw Abort(.forbidden, reason: "Admin token required")
+        }
+        let payload = try req.content.decode(AttendanceMLPFeedbackRequest.self)
+        return try await manager.submitMLPFeedback(
+            userId: payload.userId,
+            dayString: payload.day,
+            etaNN: payload.etaNn,
+            on: req.db
+        )
     }
 
     private func getObservations(req: Request) async throws -> AttendanceDayObservationsResponse {

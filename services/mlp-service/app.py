@@ -3,12 +3,16 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import logging
 import os
+import sys
+import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 
 from inference_runtime import AttendanceMLPInferenceRuntime
@@ -18,6 +22,25 @@ from inference_runtime import InferenceValidationError
 
 LOGGER = logging.getLogger("attendance-mlp-service")
 RUNTIME = AttendanceMLPInferenceRuntime()
+SCRIPT_PATH = Path(__file__).resolve()
+WORKSPACE_ROOT = SCRIPT_PATH.parents[3]
+TRAINING_MODULE_PATH = (
+    WORKSPACE_ROOT / "LockServer" / "services" / "attendance-analysis-service" / "mlp" / "train_attendance_mlp.py"
+)
+RETRAIN_LOCK = threading.Lock()
+
+
+def load_training_module() -> Any:
+    spec = importlib.util.spec_from_file_location("attendance_mlp_training", TRAINING_MODULE_PATH)
+    if spec is None or spec.loader is None:
+        raise ArtifactLoadError(f"Failed to load training module from {TRAINING_MODULE_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+TRAINING_MODULE = load_training_module()
 
 
 class AttendanceMLPRequestHandler(BaseHTTPRequestHandler):
@@ -41,10 +64,17 @@ class AttendanceMLPRequestHandler(BaseHTTPRequestHandler):
         self._send_error_json(HTTPStatus.NOT_FOUND, "Route not found")
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path != "/internal/mlp/infer":
-            self._send_error_json(HTTPStatus.NOT_FOUND, "Route not found")
+        if self.path == "/internal/mlp/infer":
+            self._handle_infer()
             return
 
+        if self.path == "/internal/mlp/retrain":
+            self._handle_retrain()
+            return
+
+        self._send_error_json(HTTPStatus.NOT_FOUND, "Route not found")
+
+    def _handle_infer(self) -> None:
         try:
             payload = self._read_json_body()
             items = payload.get("items")
@@ -60,6 +90,41 @@ class AttendanceMLPRequestHandler(BaseHTTPRequestHandler):
             return
 
         self._send_json(HTTPStatus.OK, response)
+
+    def _handle_retrain(self) -> None:
+        try:
+            payload = self._read_json_body()
+            feedback_samples = payload.get("feedback_samples")
+            if not isinstance(feedback_samples, list):
+                raise InferenceValidationError("Request body must include a feedback_samples array")
+
+            with RETRAIN_LOCK:
+                training_summary = TRAINING_MODULE.train_with_feedback_samples(
+                    feedback_samples=feedback_samples,
+                    artifacts_root=RUNTIME.artifacts_root,
+                )
+                loaded = RUNTIME.reload_latest_artifact()
+        except InferenceValidationError as error:
+            self._send_error_json(HTTPStatus.BAD_REQUEST, str(error))
+            return
+        except Exception as error:  # pragma: no cover - exercised in manual runtime verification
+            LOGGER.exception("Retraining request failed")
+            self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, str(error))
+            return
+
+        LOGGER.info(
+            "Retrained attendance MLP model %s with %s accepted feedback samples",
+            loaded.model_version,
+            training_summary["feedback_samples_count"],
+        )
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "model_version": loaded.model_version,
+                "artifact_id": loaded.artifact_id,
+                "feedback_samples_count": training_summary["feedback_samples_count"],
+            },
+        )
 
     def log_message(self, format: str, *args: Any) -> None:
         LOGGER.info("%s - %s", self.address_string(), format % args)

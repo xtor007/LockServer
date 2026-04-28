@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import timezone
@@ -82,11 +83,15 @@ class AttendanceMLPInferenceRuntime:
         self.latest_pointer_path = Path(
             latest_pointer_path or os.environ.get("LOCKSERVER_MLP_LATEST_POINTER") or DEFAULT_LATEST_POINTER
         ).resolve()
+        self._lock = threading.RLock()
         self.loaded = self._load_latest_artifact()
 
     def infer_batch(self, items: list[dict[str, Any]]) -> dict[str, Any]:
         if not items:
             raise InferenceValidationError("items must not be empty")
+
+        with self._lock:
+            loaded = self.loaded
 
         feature_matrix = []
         request_ids: list[str] = []
@@ -109,11 +114,11 @@ class AttendanceMLPInferenceRuntime:
             feature_matrix.append(parsed_features)
 
         raw_features = np.array(feature_matrix, dtype=np.float32)
-        normalized_features = (raw_features - self.loaded.normalization_mean) / self.loaded.normalization_std
+        normalized_features = (raw_features - loaded.normalization_mean) / loaded.normalization_std
         normalized_features = normalized_features.astype(np.float32)
 
         with torch.no_grad():
-            predictions = self.loaded.model(torch.from_numpy(normalized_features)).cpu().numpy().reshape(-1)
+            predictions = loaded.model(torch.from_numpy(normalized_features)).cpu().numpy().reshape(-1)
 
         timestamp = utc_now_iso()
         results = []
@@ -128,10 +133,10 @@ class AttendanceMLPInferenceRuntime:
                 {
                     "request_id": request_id,
                     "eta_nn": round(eta_nn, 6),
-                    "model_version": self.loaded.model_version,
+                    "model_version": loaded.model_version,
                     "diagnostics": {
-                        "artifact_id": self.loaded.artifact_id,
-                        "feature_order": list(self.loaded.feature_order),
+                        "artifact_id": loaded.artifact_id,
+                        "feature_order": list(loaded.feature_order),
                         "input_features": [round(float(value), 6) for value in raw_values],
                         "normalized_features": [round(float(value), 6) for value in normalized_values],
                         "inference_timestamp": timestamp,
@@ -140,21 +145,30 @@ class AttendanceMLPInferenceRuntime:
             )
 
         return {
-            "model_version": self.loaded.model_version,
-            "artifact_id": self.loaded.artifact_id,
-            "feature_order": list(self.loaded.feature_order),
+            "model_version": loaded.model_version,
+            "artifact_id": loaded.artifact_id,
+            "feature_order": list(loaded.feature_order),
             "results": results,
         }
 
     def model_info(self) -> dict[str, Any]:
+        with self._lock:
+            loaded = self.loaded
+
         return {
-            "model_version": self.loaded.model_version,
-            "artifact_id": self.loaded.artifact_id,
-            "feature_order": list(self.loaded.feature_order),
-            "metadata_path": str(self.loaded.metadata_path),
-            "model_path": str(self.loaded.model_path),
-            "normalization_path": str(self.loaded.normalization_path),
+            "model_version": loaded.model_version,
+            "artifact_id": loaded.artifact_id,
+            "feature_order": list(loaded.feature_order),
+            "metadata_path": str(loaded.metadata_path),
+            "model_path": str(loaded.model_path),
+            "normalization_path": str(loaded.normalization_path),
         }
+
+    def reload_latest_artifact(self) -> LoadedArtifact:
+        loaded = self._load_latest_artifact()
+        with self._lock:
+            self.loaded = loaded
+        return loaded
 
     def _load_latest_artifact(self) -> LoadedArtifact:
         candidate_metadata_paths = self._candidate_metadata_paths()

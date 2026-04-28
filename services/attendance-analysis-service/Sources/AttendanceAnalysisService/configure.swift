@@ -13,6 +13,7 @@ func configure(_ app: Application) async throws {
     app.migrations.add(AddAttendanceAnalysisResultCoreSignals())
     app.migrations.add(AddAttendanceAnalysisResultClusteringFields())
     app.migrations.add(AddAttendanceAnalysisResultMLPFields())
+    app.migrations.add(CreateAttendanceMLPFeedbackSample())
     app.migrations.add(CreateAttendanceClusteringModelRecord())
     try await app.autoMigrate()
 
@@ -26,15 +27,15 @@ func configure(_ app: Application) async throws {
 }
 
 func makeAttendanceAnalysisManager(_ app: Application) throws -> AttendanceAnalysisManager {
-    AttendanceAnalysisManager(
+    let mlpClient = AttendanceMLPServiceClient(client: app.client, baseURL: try ServiceEndpoints.mlpBaseURL())
+    return AttendanceAnalysisManager(
         directoryClient: AttendanceDirectoryServiceClient(client: app.client, baseURL: try ServiceEndpoints.directoryBaseURL()),
         accessClient: AttendanceAccessServiceClient(client: app.client, baseURL: try ServiceEndpoints.accessBaseURL()),
         externalContextClient: AttendanceExternalContextServiceClient(client: app.client, baseURL: try ServiceEndpoints.externalContextBaseURL()),
         baselineWindowDays: try attendanceBaselineWindowDays(),
         clusteringService: AttendanceClusteringService(),
-        mlpInferenceService: AttendanceMLPInferenceService(
-            client: AttendanceMLPServiceClient(client: app.client, baseURL: try ServiceEndpoints.mlpBaseURL())
-        )
+        mlpInferenceService: AttendanceMLPInferenceService(client: mlpClient),
+        mlpFeedbackService: AttendanceMLPFeedbackService(client: mlpClient)
     )
 }
 

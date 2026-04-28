@@ -60,6 +60,7 @@ struct GatewayController: RouteCollection {
         attendanceAnalysis.post("clustering", "rebuild", use: rebuildAttendanceClustering)
         attendanceAnalysis.post("mlp", "run", use: runAttendanceMLP)
         attendanceAnalysis.post("mlp", "rebuild", use: rebuildAttendanceMLP)
+        attendanceAnalysis.post("mlp", "feedback", use: submitAttendanceMLPFeedback)
         attendanceAnalysis.get("users", ":id", "observations", use: getAttendanceObservations)
         attendanceAnalysis.get("users", ":id", "observations", ":day", use: getAttendanceObservation)
         attendanceAnalysis.get("users", ":id", "results", use: getAttendanceResults)
@@ -262,6 +263,10 @@ struct GatewayController: RouteCollection {
 
     private func rebuildAttendanceMLP(req: Request) async throws -> Response {
         try await forwardAttendanceRequest(req, path: "/internal/attendance-analysis/mlp/rebuild")
+    }
+
+    private func submitAttendanceMLPFeedback(req: Request) async throws -> Response {
+        try await forwardAttendanceRequest(req, path: "/internal/attendance-analysis/mlp/feedback")
     }
 
     private func getAttendanceObservations(req: Request) async throws -> Response {

@@ -31,6 +31,24 @@ struct AttendanceMLPServiceClient {
 
         return try decoder.decode(InferenceResponse.self, from: Data(buffer: body))
     }
+
+    func retrain(feedbackSamples: [RetrainFeedbackSample]) async throws -> RetrainResponse {
+        let response = try await serviceClient.send(
+            method: .POST,
+            path: "/internal/mlp/retrain",
+            headers: internalHeaders,
+            body: RetrainRequest(feedbackSamples: feedbackSamples)
+        )
+
+        guard response.status == .ok, let body = response.body else {
+            throw Abort(
+                .failedDependency,
+                reason: "Attendance MLP retraining failed: \(responseReason(from: response))"
+            )
+        }
+
+        return try decoder.decode(RetrainResponse.self, from: Data(buffer: body))
+    }
 }
 
 extension AttendanceMLPServiceClient {
@@ -46,6 +64,40 @@ extension AttendanceMLPServiceClient {
 
     struct InferenceRequest: Encodable {
         let items: [InferenceItem]
+    }
+
+    struct RetrainFeedbackSample: Encodable {
+        let sampleId: String
+        let zS: Double
+        let zT: Double
+        let f: Double
+        let airAlertMinutes: Int
+        let trafficScore: Double
+        let powerScore: Double
+        let weatherScore: Double
+        let etaNNTarget: Double
+        let sourceModelVersion: String
+
+        enum CodingKeys: String, CodingKey {
+            case sampleId = "sample_id"
+            case zS = "z_s"
+            case zT = "z_t"
+            case f
+            case airAlertMinutes = "air_alert_minutes"
+            case trafficScore = "traffic_score"
+            case powerScore = "power_score"
+            case weatherScore = "weather_score"
+            case etaNNTarget = "eta_nn_target"
+            case sourceModelVersion = "source_model_version"
+        }
+    }
+
+    struct RetrainRequest: Encodable {
+        let feedbackSamples: [RetrainFeedbackSample]
+
+        enum CodingKeys: String, CodingKey {
+            case feedbackSamples = "feedback_samples"
+        }
     }
 
     struct InferenceResponse: Decodable {
@@ -89,6 +141,18 @@ extension AttendanceMLPServiceClient {
             case inputFeatures = "input_features"
             case normalizedFeatures = "normalized_features"
             case inferenceTimestamp = "inference_timestamp"
+        }
+    }
+
+    struct RetrainResponse: Decodable {
+        let modelVersion: String
+        let artifactId: String
+        let feedbackSamplesCount: Int
+
+        enum CodingKeys: String, CodingKey {
+            case modelVersion = "model_version"
+            case artifactId = "artifact_id"
+            case feedbackSamplesCount = "feedback_samples_count"
         }
     }
 }

@@ -25,6 +25,7 @@ enum AttendanceMLPStatus: String, Codable {
     case notReady = "not_ready"
     case failed = "failed"
     case ready = "ready"
+    case manuallyCorrected = "manually_corrected"
 }
 
 struct AttendanceObservationCommandRequest: Content {
@@ -44,6 +45,12 @@ struct AttendanceClusteringCommandRequest: Content {
 struct AttendanceMLPCommandRequest: Content {
     let day: String
     let userId: UUID?
+}
+
+struct AttendanceMLPFeedbackRequest: Content {
+    let userId: UUID
+    let day: String
+    let etaNn: Double
 }
 
 struct AttendanceObservationRunResponse: Content {
@@ -100,6 +107,15 @@ struct AttendanceMLPRunItemResponse: Content {
     let wasInferred: Bool
     let etaNN: Double?
     let mlpModelVersion: String?
+    let result: AttendanceAnalysisResultResponse
+}
+
+struct AttendanceMLPFeedbackResponse: Content {
+    let feedbackSampleId: UUID
+    let pendingFeedbackCount: Int
+    let retrainingTriggered: Bool
+    let retrainedModelVersion: String?
+    let retrainingError: String?
     let result: AttendanceAnalysisResultResponse
 }
 

@@ -10,6 +10,7 @@ struct AttendanceAnalysisManager {
     private let externalContextClient: AttendanceExternalContextServiceClient
     private let clusteringService: AttendanceClusteringService
     private let mlpInferenceService: AttendanceMLPInferenceService
+    private let mlpFeedbackService: AttendanceMLPFeedbackService
     private let builder = AttendanceObservationBuilder()
     private let signalCalculator: AttendanceCoreSignalCalculator
     private let baselineWindowDays: Int
@@ -22,13 +23,15 @@ struct AttendanceAnalysisManager {
         externalContextClient: AttendanceExternalContextServiceClient,
         baselineWindowDays: Int,
         clusteringService: AttendanceClusteringService,
-        mlpInferenceService: AttendanceMLPInferenceService
+        mlpInferenceService: AttendanceMLPInferenceService,
+        mlpFeedbackService: AttendanceMLPFeedbackService
     ) {
         self.directoryClient = directoryClient
         self.accessClient = accessClient
         self.externalContextClient = externalContextClient
         self.clusteringService = clusteringService
         self.mlpInferenceService = mlpInferenceService
+        self.mlpFeedbackService = mlpFeedbackService
         self.baselineWindowDays = max(baselineWindowDays, 1)
         self.signalCalculator = AttendanceCoreSignalCalculator(baselineWindowDays: self.baselineWindowDays)
 
@@ -213,6 +216,29 @@ struct AttendanceAnalysisManager {
             wasRebuilt: rebuild,
             modelVersion: execution.modelVersion,
             items: items
+        )
+    }
+
+    func submitMLPFeedback(
+        userId: UUID,
+        dayString: String,
+        etaNN: Double,
+        on database: Database
+    ) async throws -> AttendanceMLPFeedbackResponse {
+        let submission = try await mlpFeedbackService.submitFeedback(
+            userId: userId,
+            dayString: dayString,
+            etaNN: etaNN,
+            on: database
+        )
+
+        return AttendanceMLPFeedbackResponse(
+            feedbackSampleId: submission.feedbackSampleId,
+            pendingFeedbackCount: submission.pendingFeedbackCount,
+            retrainingTriggered: submission.retrainingTriggered,
+            retrainedModelVersion: submission.retrainedModelVersion,
+            retrainingError: submission.retrainingError,
+            result: try makeResultResponse(from: submission.result)
         )
     }
 }

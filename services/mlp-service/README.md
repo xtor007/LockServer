@@ -17,6 +17,9 @@
   - current loaded artifact info
 - `POST /internal/mlp/infer`
   - batch inference endpoint
+- `POST /internal/mlp/retrain`
+  - retrain on top of the fixed base dataset plus accepted feedback samples
+  - reload the newest artifact immediately after successful training
 
 Request shape:
 
@@ -40,6 +43,27 @@ The feature order is fixed:
 5. `traffic_score`
 6. `power_score`
 7. `weather_score`
+
+Retraining request shape:
+
+```json
+{
+  "feedback_samples": [
+    {
+      "sample_id": "sample-1",
+      "z_s": -1.44,
+      "z_t": 3.57,
+      "f": 0.39,
+      "air_alert_minutes": 106,
+      "traffic_score": 4.17,
+      "power_score": 0.0,
+      "weather_score": 0.7,
+      "eta_nn_target": 0.58,
+      "source_model_version": "attendance-mlp-..."
+    }
+  ]
+}
+```
 
 ## Local Run
 

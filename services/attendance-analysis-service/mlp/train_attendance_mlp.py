@@ -88,6 +88,15 @@ class SplitPaths:
     metadata: Path
 
 
+def default_split_paths() -> SplitPaths:
+    return SplitPaths(
+        train=TRAIN_SPLIT_PATH,
+        validation=VAL_SPLIT_PATH,
+        test=TEST_SPLIT_PATH,
+        metadata=SPLIT_METADATA_PATH,
+    )
+
+
 class AttendanceMLP(nn.Module):
     def __init__(self) -> None:
         super().__init__()
@@ -186,12 +195,7 @@ def main() -> int:
 
     dataset_path = Path(arguments.dataset).resolve()
     artifacts_root = Path(arguments.artifacts_dir).resolve()
-    split_paths = SplitPaths(
-        train=TRAIN_SPLIT_PATH,
-        validation=VAL_SPLIT_PATH,
-        test=TEST_SPLIT_PATH,
-        metadata=SPLIT_METADATA_PATH,
-    )
+    split_paths = default_split_paths()
 
     loaded_dataset = load_dataset(dataset_path)
 
@@ -218,6 +222,7 @@ def main() -> int:
         test_rows=test_rows,
         dataset_path=dataset_path,
         artifacts_root=artifacts_root,
+        split_paths=split_paths,
         split_metadata=split_metadata,
         invalid_rows=loaded_dataset.invalid_rows,
         training_seed=arguments.training_seed,
@@ -227,6 +232,7 @@ def main() -> int:
         weight_decay=arguments.weight_decay,
         patience=arguments.patience,
         accuracy_tolerance=arguments.accuracy_tolerance,
+        feedback_summary=None,
     )
 
     print_training_summary(training_summary)
@@ -537,12 +543,187 @@ def partition_rows_by_split(
     )
 
 
+def train_with_feedback_samples(
+    feedback_samples: Sequence[Dict[str, object]],
+    dataset_path: Path = DATASET_PATH,
+    artifacts_root: Path = ARTIFACTS_ROOT,
+    split_paths: SplitPaths | None = None,
+    split_seed: int = DEFAULT_SPLIT_SEED,
+    training_seed: int = DEFAULT_TRAINING_SEED,
+    epochs: int = DEFAULT_EPOCHS,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    learning_rate: float = DEFAULT_LEARNING_RATE,
+    weight_decay: float = DEFAULT_WEIGHT_DECAY,
+    patience: int = DEFAULT_PATIENCE,
+    accuracy_tolerance: float = ACCURACY_TOLERANCE,
+    recreate_splits: bool = False,
+) -> Dict[str, object]:
+    if not feedback_samples:
+        raise ValueError("feedback_samples must not be empty")
+
+    resolved_dataset_path = Path(dataset_path).resolve()
+    resolved_artifacts_root = Path(artifacts_root).resolve()
+    resolved_split_paths = split_paths or default_split_paths()
+
+    loaded_dataset = load_dataset(resolved_dataset_path)
+    split_metadata = ensure_splits(
+        loaded_dataset=loaded_dataset,
+        dataset_path=resolved_dataset_path,
+        split_paths=resolved_split_paths,
+        split_seed=split_seed,
+        force_recreate=recreate_splits,
+    )
+    train_rows, validation_rows, test_rows = partition_rows_by_split(
+        rows=loaded_dataset.rows,
+        split_metadata=split_metadata,
+    )
+    feedback_rows, feedback_summary = build_feedback_rows(feedback_samples)
+
+    return train_pipeline(
+        train_rows=list(train_rows) + feedback_rows,
+        validation_rows=validation_rows,
+        test_rows=test_rows,
+        dataset_path=resolved_dataset_path,
+        artifacts_root=resolved_artifacts_root,
+        split_paths=resolved_split_paths,
+        split_metadata=split_metadata,
+        invalid_rows=loaded_dataset.invalid_rows,
+        training_seed=training_seed,
+        epochs=epochs,
+        batch_size=batch_size,
+        learning_rate=learning_rate,
+        weight_decay=weight_decay,
+        patience=patience,
+        accuracy_tolerance=accuracy_tolerance,
+        feedback_summary=feedback_summary,
+    )
+
+
+def build_feedback_rows(
+    feedback_samples: Sequence[Dict[str, object]],
+) -> tuple[List[DatasetRow], Dict[str, object]]:
+    rows: List[DatasetRow] = []
+    canonical_feedback: List[Dict[str, object]] = []
+    source_model_versions = set()
+
+    for index, sample in enumerate(feedback_samples, start=1):
+        if not isinstance(sample, dict):
+            raise ValueError("Each feedback sample must be a JSON object")
+
+        sample_id = parse_feedback_string(sample, "sample_id")
+        source_model_version = parse_feedback_string(sample, "source_model_version")
+        z_s = parse_feedback_float(sample, "z_s")
+        z_t = parse_feedback_float(sample, "z_t")
+        f_value = parse_feedback_float(sample, "f")
+        air_alert_minutes = parse_feedback_int(sample, "air_alert_minutes", minimum=0)
+        traffic_score = parse_feedback_float(sample, "traffic_score")
+        power_score = parse_feedback_float(sample, "power_score")
+        weather_score = parse_feedback_float(sample, "weather_score")
+        eta_nn_target = parse_feedback_float(sample, "eta_nn_target")
+
+        if eta_nn_target < 0.0 or eta_nn_target > 1.0:
+            raise ValueError("feedback sample eta_nn_target must stay inside [0, 1]")
+
+        raw_values = {
+            "z_s": str(z_s),
+            "z_t": str(z_t),
+            "f": str(f_value),
+            "air_alert_minutes": str(air_alert_minutes),
+            "traffic_score": str(traffic_score),
+            "power_score": str(power_score),
+            "weather_score": str(weather_score),
+            "eta_nn_target": str(eta_nn_target),
+            "eta_nn_label_reason": (
+                f"manual_feedback=1;sample_id={sample_id};source_model_version={source_model_version}"
+            ),
+        }
+        rows.append(
+            DatasetRow(
+                source_row_number=1_000_000_000 + index,
+                raw_values=raw_values,
+                features=np.array(
+                    [
+                        z_s,
+                        z_t,
+                        f_value,
+                        float(air_alert_minutes),
+                        traffic_score,
+                        power_score,
+                        weather_score,
+                    ],
+                    dtype=np.float32,
+                ),
+                target=eta_nn_target,
+            )
+        )
+
+        canonical_feedback.append(
+            {
+                "sample_id": sample_id,
+                "source_model_version": source_model_version,
+                "z_s": z_s,
+                "z_t": z_t,
+                "f": f_value,
+                "air_alert_minutes": air_alert_minutes,
+                "traffic_score": traffic_score,
+                "power_score": power_score,
+                "weather_score": weather_score,
+                "eta_nn_target": eta_nn_target,
+            }
+        )
+        source_model_versions.add(source_model_version)
+
+    canonical_json = json.dumps(
+        canonical_feedback,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    feedback_sha256 = hashlib.sha256(canonical_json).hexdigest()
+
+    return rows, {
+        "count": len(rows),
+        "sha256": feedback_sha256,
+        "source_model_versions": sorted(source_model_versions),
+        "sample_ids_preview": [sample["sample_id"] for sample in canonical_feedback[:20]],
+    }
+
+
+def parse_feedback_string(sample: Dict[str, object], key: str) -> str:
+    value = sample.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"feedback sample field {key} must be a non-empty string")
+    return value.strip()
+
+
+def parse_feedback_float(sample: Dict[str, object], key: str) -> float:
+    value = sample.get(key)
+    if not isinstance(value, (int, float)):
+        raise ValueError(f"feedback sample field {key} must be numeric")
+
+    parsed = float(value)
+    if math.isfinite(parsed) is False:
+        raise ValueError(f"feedback sample field {key} must be finite")
+    return parsed
+
+
+def parse_feedback_int(sample: Dict[str, object], key: str, minimum: int | None = None) -> int:
+    parsed = parse_feedback_float(sample, key)
+    if parsed.is_integer() is False:
+        raise ValueError(f"feedback sample field {key} must be an integer value")
+
+    value = int(parsed)
+    if minimum is not None and value < minimum:
+        raise ValueError(f"feedback sample field {key} must be >= {minimum}")
+    return value
+
+
 def train_pipeline(
     train_rows: Sequence[DatasetRow],
     validation_rows: Sequence[DatasetRow],
     test_rows: Sequence[DatasetRow],
     dataset_path: Path,
     artifacts_root: Path,
+    split_paths: SplitPaths,
     split_metadata: Dict[str, object],
     invalid_rows: Sequence[Dict[str, object]],
     training_seed: int,
@@ -552,6 +733,7 @@ def train_pipeline(
     weight_decay: float,
     patience: int,
     accuracy_tolerance: float,
+    feedback_summary: Dict[str, object] | None,
 ) -> Dict[str, object]:
     if accuracy_tolerance <= 0.0:
         raise ValueError("Accuracy tolerance must be positive.")
@@ -656,7 +838,10 @@ def train_pipeline(
         accuracy_tolerance=accuracy_tolerance,
     )
 
-    version_id = make_version_id(dataset_path)
+    version_id = make_version_id(
+        dataset_path,
+        feedback_sha256=(feedback_summary or {}).get("sha256"),
+    )
     version_directory = artifacts_root / version_id
     version_directory.mkdir(parents=True, exist_ok=False)
 
@@ -715,8 +900,8 @@ def train_pipeline(
         "created_at": utc_now_iso(),
         "dataset_file_used": str(dataset_path),
         "dataset_sha256": sha256_file(dataset_path),
-        "split_metadata_used": str(SPLIT_METADATA_PATH),
-        "split_metadata_sha256": sha256_file(SPLIT_METADATA_PATH),
+        "split_metadata_used": str(split_paths.metadata),
+        "split_metadata_sha256": sha256_file(split_paths.metadata),
         "split_files_used": {
             "train": split_files["train"]["path"],
             "validation": split_files["validation"]["path"],
@@ -767,6 +952,12 @@ def train_pipeline(
             "invalid_rows_count": len(invalid_rows),
             "invalid_rows_preview": list(invalid_rows[:20]),
         },
+        "feedback_training_summary": feedback_summary
+        or {
+            "count": 0,
+            "sha256": None,
+            "source_model_versions": [],
+        },
         "manual_retraining_commands": {
             "wrapper_script": RETRAIN_COMMAND,
             "python_command": f"python3 {TRAINING_COMMAND_RELATIVE} retrain",
@@ -785,7 +976,7 @@ def train_pipeline(
         "model_version_id": version_id,
         "artifact_directory": str(version_directory),
         "dataset_path": str(dataset_path),
-        "split_metadata_path": str(SPLIT_METADATA_PATH),
+        "split_metadata_path": str(split_paths.metadata),
         "training_metrics": training_metrics,
         "validation_metrics": validation_metrics,
         "test_metrics": test_metrics,
@@ -795,6 +986,7 @@ def train_pipeline(
         "model_path": str(model_path),
         "best_epoch": best_epoch,
         "epochs_completed": len(epoch_history),
+        "feedback_samples_count": int((feedback_summary or {}).get("count", 0)),
     }
 
 
@@ -851,10 +1043,15 @@ def set_deterministic_seed(seed: int) -> None:
         torch.use_deterministic_algorithms(True)
 
 
-def make_version_id(dataset_path: Path) -> str:
+def make_version_id(dataset_path: Path, feedback_sha256: object | None = None) -> str:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
-    dataset_hash = sha256_file(dataset_path)[:8]
-    return f"attendance-mlp-{timestamp}-{dataset_hash}"
+    dataset_hash = sha256_file(dataset_path)
+    if isinstance(feedback_sha256, str) and feedback_sha256:
+        digest = hashlib.sha256(f"{dataset_hash}:{feedback_sha256}".encode("utf-8")).hexdigest()
+    else:
+        digest = dataset_hash
+    dataset_hash_short = digest[:8]
+    return f"attendance-mlp-{timestamp}-{dataset_hash_short}"
 
 
 def write_json(path: Path, payload: object) -> None:

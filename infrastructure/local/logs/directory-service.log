@@ -7,4 +7,4 @@
 [ INFO ] [Migrator] Starting prepare [database-id: mysql, migration: DirectoryService.CreateDirectoryFinger]
 [ INFO ] [Migrator] Finished prepare [database-id: mysql, migration: DirectoryService.CreateDirectoryFinger]
 [ NOTICE ] Server started on http://127.0.0.1:8082
-[ INFO ] GET /validate [request-id: AC308B5E-CC72-4A41-9604-837E0649E6D4]
+[ INFO ] GET /validate [request-id: 55879DE4-B556-42BC-998B-73E15DAC0A61]

@@ -1,4 +1,4 @@
 [ INFO ] [Migrator] Starting prepare [database-id: mysql, migration: AccessService.CreateAccessEnter]
 [ INFO ] [Migrator] Finished prepare [database-id: mysql, migration: AccessService.CreateAccessEnter]
 [ NOTICE ] Server started on http://127.0.0.1:8083
-[ INFO ] GET /validate [request-id: EF09A4DD-042B-4270-84A9-47D7D1B5473E]
+[ INFO ] GET /validate [request-id: CA01BEB5-A831-4AFA-924B-0273DC5C8AC1]
