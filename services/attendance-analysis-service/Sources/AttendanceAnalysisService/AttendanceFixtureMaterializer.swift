@@ -13,12 +13,16 @@ struct AttendanceFixtureMaterializationSummary {
     let clusteredCount: Int
     let technicalOutlierCount: Int
     let clusteringModelVersion: Int?
+    let mlpReadyCount: Int
+    let mlpFailedCount: Int
+    let mlpModelVersion: String?
     let contextDayCount: Int
 }
 
 struct AttendanceFixtureMaterializer {
     private let externalContextClient: AttendanceExternalContextServiceClient
     private let clusteringService: AttendanceClusteringService
+    private let mlpInferenceService: AttendanceMLPInferenceService
     private let builder = AttendanceObservationBuilder()
     private let signalCalculator: AttendanceCoreSignalCalculator
     private let baselineWindowDays: Int
@@ -27,10 +31,12 @@ struct AttendanceFixtureMaterializer {
     init(
         externalContextClient: AttendanceExternalContextServiceClient,
         baselineWindowDays: Int,
-        clusteringService: AttendanceClusteringService
+        clusteringService: AttendanceClusteringService,
+        mlpInferenceService: AttendanceMLPInferenceService
     ) {
         self.externalContextClient = externalContextClient
         self.clusteringService = clusteringService
+        self.mlpInferenceService = mlpInferenceService
         self.baselineWindowDays = max(baselineWindowDays, 1)
         self.signalCalculator = AttendanceCoreSignalCalculator(baselineWindowDays: self.baselineWindowDays)
 
@@ -117,6 +123,7 @@ struct AttendanceFixtureMaterializer {
         }
 
         let clusteringSummary = try await clusteringService.execute(scope: .allEligible, rebuildModel: true, on: database)
+        let mlpSummary = try await mlpInferenceService.execute(scope: .allEligible, rebuild: true, on: database)
 
         return AttendanceFixtureMaterializationSummary(
             regularUserCount: users.count,
@@ -127,6 +134,9 @@ struct AttendanceFixtureMaterializer {
             clusteredCount: clusteringSummary.clusteredCount,
             technicalOutlierCount: clusteringSummary.technicalOutlierCount,
             clusteringModelVersion: clusteringSummary.modelVersion,
+            mlpReadyCount: mlpSummary.inferredCount,
+            mlpFailedCount: mlpSummary.failedCount,
+            mlpModelVersion: mlpSummary.modelVersion,
             contextDayCount: dayContexts.count
         )
     }
@@ -248,6 +258,9 @@ private extension AttendanceFixtureMaterializer {
             clusterModelVersion: draft.clusterModelVersion,
             clusterDistance: draft.clusterDistance,
             clusteringStatus: draft.clusteringStatus.rawValue,
+            etaNN: draft.etaNN,
+            mlpModelVersion: draft.mlpModelVersion,
+            mlpStatus: draft.mlpStatus.rawValue,
             detailsJson: try encode(draft.details)
         )
     }
@@ -279,6 +292,9 @@ private extension AttendanceFixtureMaterializer {
                 clusterModelVersion: nil,
                 clusterDistance: nil,
                 clusteringStatus: .notApplicable,
+                etaNN: nil,
+                mlpModelVersion: nil,
+                mlpStatus: .notReady,
                 details: makeDebugDetails(
                     from: outcome.details,
                     snapshot: AttendanceCoreSignalCalculator.Snapshot(
@@ -297,6 +313,7 @@ private extension AttendanceFixtureMaterializer {
                         deficitHistoryDaysCount: 0,
                         calculationNotes: []
                     ),
+                    arrivalTime: nil,
                     context: ExternalContextSnapshot(
                         airAlertIntervals: nil,
                         trafficScore: nil,
@@ -326,6 +343,9 @@ private extension AttendanceFixtureMaterializer {
                 clusterModelVersion: nil,
                 clusterDistance: nil,
                 clusteringStatus: .notApplicable,
+                etaNN: nil,
+                mlpModelVersion: nil,
+                mlpStatus: .notReady,
                 details: makeDebugDetails(
                     from: outcome.details,
                     snapshot: AttendanceCoreSignalCalculator.Snapshot(
@@ -344,6 +364,7 @@ private extension AttendanceFixtureMaterializer {
                         deficitHistoryDaysCount: 0,
                         calculationNotes: ["target_day_technical_anomaly"]
                     ),
+                    arrivalTime: nil,
                     context: ExternalContextSnapshot(
                         airAlertIntervals: nil,
                         trafficScore: nil,
@@ -374,6 +395,9 @@ private extension AttendanceFixtureMaterializer {
                     clusterModelVersion: nil,
                     clusterDistance: nil,
                     clusteringStatus: .notApplicable,
+                    etaNN: nil,
+                    mlpModelVersion: nil,
+                    mlpStatus: .notReady,
                     details: makeDebugDetails(
                         from: outcome.details,
                         snapshot: AttendanceCoreSignalCalculator.Snapshot(
@@ -392,6 +416,7 @@ private extension AttendanceFixtureMaterializer {
                             deficitHistoryDaysCount: 0,
                             calculationNotes: ["missing_first_entry_time_for_signal_stage"]
                         ),
+                        arrivalTime: nil,
                         context: ExternalContextSnapshot(
                             airAlertIntervals: nil,
                             trafficScore: nil,
@@ -431,10 +456,14 @@ private extension AttendanceFixtureMaterializer {
                 clusterModelVersion: nil,
                 clusterDistance: nil,
                 clusteringStatus: calculation.status == .signalsReady ? .notStarted : .notApplicable,
+                etaNN: nil,
+                mlpModelVersion: nil,
+                mlpStatus: .notReady,
                 details: makeDebugDetails(
                     from: outcome.details,
                     snapshot: calculation.snapshot,
                     debug: calculation.debug,
+                    arrivalTime: observation.firstEntryTime,
                     context: context
                 )
             )
@@ -445,9 +474,16 @@ private extension AttendanceFixtureMaterializer {
         from source: AttendanceAnalysisDebugDetails,
         snapshot: AttendanceCoreSignalCalculator.Snapshot,
         debug: AttendanceCoreSignalCalculator.Debug,
+        arrivalTime: Date?,
         context: ExternalContextSnapshot
     ) -> AttendanceAnalysisDebugDetails {
-        AttendanceAnalysisDebugDetails(
+        let airAlertMinutes = AttendanceAirAlertImpactCalculator.totalMinutes(
+            arrivalTime: arrivalTime,
+            sessionRanges: source.sessionRanges,
+            intervals: context.airAlertIntervals
+        )
+
+        return AttendanceAnalysisDebugDetails(
             workNormMinutes: snapshot.workNormMinutes,
             rawEventCount: source.rawEventCount,
             rawEvents: source.rawEvents,
@@ -468,6 +504,7 @@ private extension AttendanceFixtureMaterializer {
             f: snapshot.f,
             calculationNotes: debug.calculationNotes.isEmpty ? nil : debug.calculationNotes,
             airAlertIntervals: context.airAlertIntervals,
+            airAlertMinutes: airAlertMinutes,
             trafficScore: context.trafficScore,
             powerScore: context.powerScore,
             weatherScore: context.weatherScore,

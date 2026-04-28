@@ -25,6 +25,10 @@ public enum ServiceEndpoints {
         try baseURL(hostKey: "LOCKSERVER_EXTERNAL_CONTEXT_HOST", portKey: "LOCKSERVER_EXTERNAL_CONTEXT_PORT", defaultPort: 8086)
     }
 
+    public static func mlpBaseURL() throws -> String {
+        try baseURL(hostKey: "LOCKSERVER_MLP_HOST", portKey: "LOCKSERVER_MLP_PORT", defaultPort: 8087)
+    }
+
     private static func baseURL(hostKey: String, portKey: String, defaultPort: Int) throws -> String {
         let host = try EnvironmentValue.string(hostKey, default: "127.0.0.1")
         let port = try EnvironmentValue.int(portKey, default: defaultPort)

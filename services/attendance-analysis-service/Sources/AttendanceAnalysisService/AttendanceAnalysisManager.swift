@@ -9,6 +9,7 @@ struct AttendanceAnalysisManager {
     private let accessClient: AttendanceAccessServiceClient
     private let externalContextClient: AttendanceExternalContextServiceClient
     private let clusteringService: AttendanceClusteringService
+    private let mlpInferenceService: AttendanceMLPInferenceService
     private let builder = AttendanceObservationBuilder()
     private let signalCalculator: AttendanceCoreSignalCalculator
     private let baselineWindowDays: Int
@@ -20,12 +21,14 @@ struct AttendanceAnalysisManager {
         accessClient: AttendanceAccessServiceClient,
         externalContextClient: AttendanceExternalContextServiceClient,
         baselineWindowDays: Int,
-        clusteringService: AttendanceClusteringService
+        clusteringService: AttendanceClusteringService,
+        mlpInferenceService: AttendanceMLPInferenceService
     ) {
         self.directoryClient = directoryClient
         self.accessClient = accessClient
         self.externalContextClient = externalContextClient
         self.clusteringService = clusteringService
+        self.mlpInferenceService = mlpInferenceService
         self.baselineWindowDays = max(baselineWindowDays, 1)
         self.signalCalculator = AttendanceCoreSignalCalculator(baselineWindowDays: self.baselineWindowDays)
 
@@ -151,6 +154,61 @@ struct AttendanceAnalysisManager {
             userId: userId,
             processedCount: execution.processedCount,
             clusteredCount: execution.clusteredCount,
+            skippedCount: execution.skippedCount,
+            wasRebuilt: rebuild,
+            modelVersion: execution.modelVersion,
+            items: items
+        )
+    }
+
+    func runMLP(
+        dayString: String,
+        userId: UUID?,
+        rebuild: Bool,
+        on database: Database
+    ) async throws -> AttendanceMLPRunResponse {
+        let day = try AttendanceDay(dayString)
+        let scope: AttendanceMLPInferenceService.Scope = if let userId {
+            .userDay(userId, day)
+        } else {
+            .day(day)
+        }
+
+        let execution = try await mlpInferenceService.execute(scope: scope, rebuild: rebuild, on: database)
+        let processedIds = Set(execution.processedResultIds)
+        let results = try await AttendanceAnalysisResult.query(on: database)
+            .filter(\.$day == day.startOfDay)
+            .sort(\.$userId, .ascending)
+            .all()
+            .filter { result in
+                processedIds.contains(result.id ?? UUID()) &&
+                    (userId == nil || result.userId == userId)
+            }
+
+        let resultResponses = try results.map(makeResultResponse)
+        let items = resultResponses.map { result in
+            AttendanceMLPRunItemResponse(
+                userId: result.userId,
+                day: result.day,
+                status: result.status,
+                mlpStatus: result.mlpStatus,
+                wasInferred: result.id.map(execution.inferredResultIds.contains) ?? false,
+                etaNN: result.etaNN,
+                mlpModelVersion: result.mlpModelVersion,
+                result: result
+            )
+        }
+
+        if userId != nil, items.isEmpty {
+            throw Abort(.notFound, reason: "Attendance analysis result not found for requested user and day")
+        }
+
+        return AttendanceMLPRunResponse(
+            day: day.stringValue,
+            userId: userId,
+            processedCount: execution.processedCount,
+            inferredCount: execution.inferredCount,
+            failedCount: execution.failedCount,
             skippedCount: execution.skippedCount,
             wasRebuilt: rebuild,
             modelVersion: execution.modelVersion,
@@ -353,6 +411,9 @@ private extension AttendanceAnalysisManager {
             existing.clusterModelVersion = draft.clusterModelVersion
             existing.clusterDistance = draft.clusterDistance
             existing.clusteringStatus = draft.clusteringStatus.rawValue
+            existing.etaNN = draft.etaNN
+            existing.mlpModelVersion = draft.mlpModelVersion
+            existing.mlpStatus = draft.mlpStatus.rawValue
             existing.detailsJson = detailsJson
             try await existing.update(on: database)
             return existing
@@ -377,6 +438,9 @@ private extension AttendanceAnalysisManager {
             clusterModelVersion: draft.clusterModelVersion,
             clusterDistance: draft.clusterDistance,
             clusteringStatus: draft.clusteringStatus.rawValue,
+            etaNN: draft.etaNN,
+            mlpModelVersion: draft.mlpModelVersion,
+            mlpStatus: draft.mlpStatus.rawValue,
             detailsJson: detailsJson
         )
         try await result.create(on: database)
@@ -434,6 +498,9 @@ private extension AttendanceAnalysisManager {
             clusterModelVersion: result.clusterModelVersion ?? details.clusterModelVersion,
             clusterDistance: result.clusterDistance ?? details.clusterDistance,
             clusteringStatus: result.clusteringStatus ?? details.clusteringStatus,
+            etaNN: result.etaNN,
+            mlpModelVersion: result.mlpModelVersion,
+            mlpStatus: result.mlpStatus,
             detailsJson: details,
             createdAt: result.createdAt,
             updatedAt: result.updatedAt
@@ -475,6 +542,9 @@ private extension AttendanceAnalysisManager {
                 clusterModelVersion: nil,
                 clusterDistance: nil,
                 clusteringStatus: .notApplicable,
+                etaNN: nil,
+                mlpModelVersion: nil,
+                mlpStatus: .notReady,
                 details: makeDebugDetails(
                     from: outcome.details,
                     snapshot: AttendanceCoreSignalCalculator.Snapshot(
@@ -493,6 +563,7 @@ private extension AttendanceAnalysisManager {
                         deficitHistoryDaysCount: 0,
                         calculationNotes: []
                     ),
+                    arrivalTime: nil,
                     airAlertIntervals: nil,
                     trafficScore: nil,
                     powerScore: nil,
@@ -520,6 +591,9 @@ private extension AttendanceAnalysisManager {
                 clusterModelVersion: nil,
                 clusterDistance: nil,
                 clusteringStatus: .notApplicable,
+                etaNN: nil,
+                mlpModelVersion: nil,
+                mlpStatus: .notReady,
                 details: makeDebugDetails(
                     from: outcome.details,
                     snapshot: AttendanceCoreSignalCalculator.Snapshot(
@@ -538,6 +612,7 @@ private extension AttendanceAnalysisManager {
                         deficitHistoryDaysCount: 0,
                         calculationNotes: ["target_day_technical_anomaly"]
                     ),
+                    arrivalTime: nil,
                     airAlertIntervals: nil,
                     trafficScore: nil,
                     powerScore: nil,
@@ -566,6 +641,9 @@ private extension AttendanceAnalysisManager {
                     clusterModelVersion: nil,
                     clusterDistance: nil,
                     clusteringStatus: .notApplicable,
+                    etaNN: nil,
+                    mlpModelVersion: nil,
+                    mlpStatus: .notReady,
                     details: makeDebugDetails(
                         from: outcome.details,
                         snapshot: AttendanceCoreSignalCalculator.Snapshot(
@@ -584,6 +662,7 @@ private extension AttendanceAnalysisManager {
                             deficitHistoryDaysCount: 0,
                             calculationNotes: ["missing_first_entry_time_for_signal_stage"]
                         ),
+                        arrivalTime: nil,
                         airAlertIntervals: nil,
                         trafficScore: nil,
                         powerScore: nil,
@@ -622,10 +701,14 @@ private extension AttendanceAnalysisManager {
                 clusterModelVersion: nil,
                 clusterDistance: nil,
                 clusteringStatus: calculation.status == .signalsReady ? .notStarted : .notApplicable,
+                etaNN: nil,
+                mlpModelVersion: nil,
+                mlpStatus: .notReady,
                 details: makeDebugDetails(
                     from: outcome.details,
                     snapshot: calculation.snapshot,
                     debug: calculation.debug,
+                    arrivalTime: observation.firstEntryTime,
                     airAlertIntervals: airAlertIntervals,
                     trafficScore: trafficScore,
                     powerScore: powerScore,
@@ -666,6 +749,7 @@ private extension AttendanceAnalysisManager {
         from source: AttendanceAnalysisDebugDetails,
         snapshot: AttendanceCoreSignalCalculator.Snapshot,
         debug: AttendanceCoreSignalCalculator.Debug,
+        arrivalTime: Date?,
         airAlertIntervals: [AirAlertInterval]?,
         trafficScore: Double?,
         powerScore: Double?,
@@ -673,7 +757,13 @@ private extension AttendanceAnalysisManager {
         weatherContext: WeatherContextResolvedValue?,
         externalContextNotes: [String]?
     ) -> AttendanceAnalysisDebugDetails {
-        AttendanceAnalysisDebugDetails(
+        let airAlertMinutes = AttendanceAirAlertImpactCalculator.totalMinutes(
+            arrivalTime: arrivalTime,
+            sessionRanges: source.sessionRanges,
+            intervals: airAlertIntervals
+        )
+
+        return AttendanceAnalysisDebugDetails(
             workNormMinutes: snapshot.workNormMinutes,
             rawEventCount: source.rawEventCount,
             rawEvents: source.rawEvents,
@@ -694,6 +784,7 @@ private extension AttendanceAnalysisManager {
             f: snapshot.f,
             calculationNotes: debug.calculationNotes.isEmpty ? nil : debug.calculationNotes,
             airAlertIntervals: airAlertIntervals,
+            airAlertMinutes: airAlertMinutes,
             trafficScore: trafficScore,
             powerScore: powerScore,
             weatherScore: weatherScore,

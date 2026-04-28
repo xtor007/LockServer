@@ -61,6 +61,15 @@ final class AttendanceAnalysisResult: Model, Content {
     @OptionalField(key: "clustering_status")
     var clusteringStatus: String?
 
+    @OptionalField(key: "eta_nn")
+    var etaNN: Double?
+
+    @OptionalField(key: "mlp_model_version")
+    var mlpModelVersion: String?
+
+    @OptionalField(key: "mlp_status")
+    var mlpStatus: String?
+
     @Field(key: "details_json")
     var detailsJson: String
 
@@ -92,6 +101,9 @@ final class AttendanceAnalysisResult: Model, Content {
         clusterModelVersion: Int? = nil,
         clusterDistance: Double? = nil,
         clusteringStatus: String? = nil,
+        etaNN: Double? = nil,
+        mlpModelVersion: String? = nil,
+        mlpStatus: String? = nil,
         detailsJson: String
     ) {
         self.id = id ?? UUID()
@@ -113,6 +125,9 @@ final class AttendanceAnalysisResult: Model, Content {
         self.clusterModelVersion = clusterModelVersion
         self.clusterDistance = clusterDistance
         self.clusteringStatus = clusteringStatus
+        self.etaNN = etaNN
+        self.mlpModelVersion = mlpModelVersion
+        self.mlpStatus = mlpStatus
         self.detailsJson = detailsJson
     }
 }

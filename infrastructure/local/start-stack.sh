@@ -19,6 +19,7 @@ MYSQL_SOCKET="$RUNTIME_DIR/mysql.sock"
 LOG_DIR="$ROOT_DIR/infrastructure/local/logs"
 PID_DIR="$RUNTIME_DIR/pids"
 OWN_MYSQL_MARKER="$RUNTIME_DIR/own-mysql"
+PYTHON_BIN="${LOCKSERVER_PYTHON_BIN:-python3}"
 
 mkdir -p "$LOG_DIR" "$PID_DIR"
 
@@ -72,6 +73,16 @@ start_service() {
   echo "$!" >"$pid_file"
 }
 
+start_python_service() {
+  local name="$1"
+  local script_path="$2"
+  local log_file="$LOG_DIR/$name.log"
+  local pid_file="$PID_DIR/$name.pid"
+
+  "$PYTHON_BIN" "$script_path" >"$log_file" 2>&1 &
+  echo "$!" >"$pid_file"
+}
+
 wait_for_url() {
   local url="$1"
   for _ in {1..180}; do
@@ -88,6 +99,7 @@ start_service "directory-service" "DirectoryService"
 start_service "access-service" "AccessService"
 start_service "device-service" "DeviceService"
 start_service "attendance-analysis-service" "AttendanceAnalysisService"
+start_python_service "mlp-service" "$ROOT_DIR/services/mlp-service/app.py"
 start_service "external-context-service" "ExternalContextService"
 start_service "api-gateway" "App"
 
@@ -96,6 +108,7 @@ wait_for_url "http://127.0.0.1:${LOCKSERVER_DIRECTORY_PORT}/validate"
 wait_for_url "http://127.0.0.1:${LOCKSERVER_ACCESS_PORT}/validate"
 wait_for_url "http://127.0.0.1:${LOCKSERVER_DEVICE_PORT}/validate"
 wait_for_url "http://127.0.0.1:${LOCKSERVER_ATTENDANCE_ANALYSIS_PORT}/validate"
+wait_for_url "http://127.0.0.1:${LOCKSERVER_MLP_PORT}/validate"
 wait_for_url "http://127.0.0.1:${LOCKSERVER_EXTERNAL_CONTEXT_PORT}/validate"
 wait_for_url "http://127.0.0.1:${LOCKSERVER_GATEWAY_PORT}/validate"
 

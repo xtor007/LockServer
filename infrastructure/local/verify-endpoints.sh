@@ -23,6 +23,7 @@ DIRECTORY_URL="http://127.0.0.1:${LOCKSERVER_DIRECTORY_PORT}"
 ACCESS_URL="http://127.0.0.1:${LOCKSERVER_ACCESS_PORT}"
 DEVICE_URL="http://127.0.0.1:${LOCKSERVER_DEVICE_PORT}"
 ATTENDANCE_URL="http://127.0.0.1:${LOCKSERVER_ATTENDANCE_ANALYSIS_PORT}"
+MLP_URL="http://127.0.0.1:${LOCKSERVER_MLP_PORT}"
 ATTENDANCE_GATEWAY_URL="$GATEWAY_URL/internal/attendance-analysis"
 EXTERNAL_CONTEXT_GATEWAY_URL="$GATEWAY_URL/internal/external-context"
 
@@ -51,6 +52,7 @@ assert_true_json "$(curl -sS "$DIRECTORY_URL/validate")"
 assert_true_json "$(curl -sS "$ACCESS_URL/validate")"
 assert_true_json "$(curl -sS "$DEVICE_URL/validate")"
 assert_true_json "$(curl -sS "$ATTENDANCE_URL/validate")"
+assert_true_json "$(curl -sS "$MLP_URL/validate")"
 
 echo "Requesting standard user token..."
 USER_TOKEN_RESPONSE="$(curl -sS -u user@lock.local:user1234 "$GATEWAY_URL/auth/getToken")"
@@ -80,6 +82,27 @@ ADMIN_TOKEN="$(curl -sS -u admin@lock.local:admin1234 "$GATEWAY_URL/auth/getToke
 STABLE_TOKEN="$(curl -sS -u attendance.normal@lock.local:normal1234 "$GATEWAY_URL/auth/getToken" | jq -r '.auth')"
 SHORT_TOKEN="$(curl -sS -u attendance.short@lock.local:short1234 "$GATEWAY_URL/auth/getToken" | jq -r '.auth')"
 NIGHT_TOKEN="$(curl -sS -u attendance.night@lock.local:night1234 "$GATEWAY_URL/auth/getToken" | jq -r '.auth')"
+
+echo "Checking direct MLP inference service..."
+curl -sS "$MLP_URL/internal/mlp/model" | jq -e '
+  (.model_version | length > 0)
+  and (.feature_order | length == 7)
+' >/dev/null
+curl -sS -X POST -H "Content-Type: application/json" -d '{
+  "items": [
+    {
+      "request_id": "probe-row",
+      "features": [-1.4410, 3.5787, 0.3976, 106, 4.1715, 0, 0.7]
+    }
+  ]
+}' "$MLP_URL/internal/mlp/infer" | jq -e '
+  (.model_version | length > 0)
+  and (.feature_order | length == 7)
+  and (.results | length == 1)
+  and .results[0].request_id == "probe-row"
+  and (.results[0].eta_nn >= 0 and .results[0].eta_nn <= 1)
+  and (.results[0].diagnostics.normalized_features | length == 7)
+' >/dev/null
 
 echo "Checking seeded population shape..."
 DIRECTORY_RESPONSE="$(curl -sS "$DIRECTORY_URL/internal/directory/employers")"
@@ -115,12 +138,18 @@ for user_id in "$STABLE_USER_ID" "$SPLIT_USER_ID" "$SHORT_USER_ID" "$EARLY_USER_
     and all(.clusterModelVersion != null)
     and all(.clusterDistance != null)
     and all(.clusteringStatus != null and .clusteringStatus != "not_started" and .clusteringStatus != "not_applicable")
+    and all(
+      if .status == "ready_for_next_stage"
+      then (.etaNN != null and .mlpModelVersion != null and .mlpStatus == "ready")
+      else (.etaNN == null and .mlpStatus == "not_ready")
+      end
+    )
   ' >/dev/null
 done
 
 curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$STABLE_USER_ID/results" | jq -e \
   --arg day "$SAMPLE_DAY" \
-  'any(.results[]; .day == $day and .historyDaysUsed == 3 and .zS != null and .zT != null and .f != null and .clusterName != null and .clusterScore != null and .clusterModelVersion != null and .detailsJson.airAlertIntervals != null and .detailsJson.trafficScore != null and .detailsJson.powerScore != null and .detailsJson.weatherScore != null and .detailsJson.weatherContext != null)' >/dev/null
+  'any(.results[]; .day == $day and .historyDaysUsed == 3 and .zS != null and .zT != null and .f != null and .clusterName != null and .clusterScore != null and .clusterModelVersion != null and .detailsJson.airAlertIntervals != null and .detailsJson.airAlertMinutes != null and .detailsJson.trafficScore != null and .detailsJson.powerScore != null and .detailsJson.weatherScore != null and .detailsJson.weatherContext != null)' >/dev/null
 
 curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$SPLIT_USER_ID/observations" | jq -e \
   'any(.observations[]; .sessionsCount > 1 and .breakMinutes > 0)' >/dev/null
@@ -158,7 +187,19 @@ curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/
   'any(.results[]; .clusterName == "Stable Normal" and .status == "clustering_terminal_stable_normal" and .clusteringStatus == "stable_normal_terminal")' >/dev/null
 
 curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$SHORT_USER_ID/results" | jq -e \
-  'any(.results[]; .clusterName != "Stable Normal" and .status == "ready_for_next_stage" and .clusteringStatus == "ready_for_next_stage")' >/dev/null
+  'any(.results[]; .clusterName != "Stable Normal" and .status == "ready_for_next_stage" and .clusteringStatus == "ready_for_next_stage" and .etaNN != null and .mlpModelVersion != null and .mlpStatus == "ready")' >/dev/null
+
+echo "Checking MLP trigger behavior..."
+RUN_MLP_RESPONSE="$(curl -sS -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d "{\"userId\":\"$SHORT_USER_ID\",\"day\":\"$SAMPLE_DAY\"}" "$ATTENDANCE_GATEWAY_URL/mlp/run")"
+echo "$RUN_MLP_RESPONSE" | jq -e \
+  --arg day "$SAMPLE_DAY" \
+  '.day == $day and .processedCount == 1 and .inferredCount == 0 and .failedCount == 0 and .skippedCount == 1 and (.items | length == 1) and .items[0].wasInferred == false and .items[0].mlpStatus == "ready"' >/dev/null
+
+curl -sS -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d "{\"userId\":\"$SHORT_USER_ID\",\"day\":\"$SAMPLE_DAY\"}" "$ATTENDANCE_GATEWAY_URL/clustering/rebuild" | jq -e \
+  '.processedCount == 1 and .clusteredCount == 1 and (.items | length == 1) and .items[0].result.etaNN == null and .items[0].result.mlpStatus == "not_ready"' >/dev/null
+
+curl -sS -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d "{\"userId\":\"$SHORT_USER_ID\",\"day\":\"$SAMPLE_DAY\"}" "$ATTENDANCE_GATEWAY_URL/mlp/rebuild" | jq -e \
+  '.processedCount == 1 and .inferredCount == 1 and .failedCount == 0 and .skippedCount == 0 and (.items | length == 1) and .items[0].wasInferred == true and .items[0].etaNN != null and .items[0].mlpModelVersion != null and .items[0].mlpStatus == "ready"' >/dev/null
 
 curl -sS -H "Authorization: Bearer $STABLE_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$STABLE_USER_ID/observations/$SAMPLE_DAY" | jq -e '.workedMinutes > 0' >/dev/null
 curl -sS -H "Authorization: Bearer $SHORT_TOKEN" "$ATTENDANCE_GATEWAY_URL/users/$SHORT_USER_ID/results" | jq -e '.results | length >= 200' >/dev/null

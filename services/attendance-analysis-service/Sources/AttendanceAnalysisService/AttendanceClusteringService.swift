@@ -365,6 +365,9 @@ private extension AttendanceClusteringService {
                     result.clusterModelVersion = update.clusterModelVersion
                     result.clusterDistance = update.clusterDistance
                     result.clusteringStatus = update.clusteringStatus.rawValue
+                    result.etaNN = nil
+                    result.mlpModelVersion = nil
+                    result.mlpStatus = AttendanceMLPStatus.notReady.rawValue
                     try await result.update(on: transaction)
                 }
                 return
@@ -426,7 +429,10 @@ private extension AttendanceClusteringService {
                     results.cluster_weight = assignments.cluster_weight,
                     results.cluster_model_version = assignments.cluster_model_version,
                     results.cluster_distance = assignments.cluster_distance,
-                    results.clustering_status = assignments.clustering_status
+                    results.clustering_status = assignments.clustering_status,
+                    results.eta_nn = NULL,
+                    results.mlp_model_version = NULL,
+                    results.mlp_status = '\(unsafeRaw: AttendanceMLPStatus.notReady.rawValue)'
                 """
             ).run()
         }

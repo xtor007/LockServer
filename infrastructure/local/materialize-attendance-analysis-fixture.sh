@@ -39,6 +39,13 @@ curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$GATEWAY_URL/internal/attendan
     and all(.clusterModelVersion != null)
     and all(.clusterDistance != null)
     and all(.clusteringStatus != null and .clusteringStatus != "not_started" and .clusteringStatus != "not_applicable")
+    and any(.etaNN != null and .mlpModelVersion != null and .mlpStatus == "ready")
+    and all(
+      if .status == "ready_for_next_stage"
+      then (.etaNN != null and .mlpModelVersion != null and .mlpStatus == "ready")
+      else (.etaNN == null and .mlpStatus == "not_ready")
+      end
+    )
   ' >/dev/null
 
 echo "Attendance-analysis fixture is materialized."

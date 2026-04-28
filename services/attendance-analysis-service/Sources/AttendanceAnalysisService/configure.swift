@@ -12,6 +12,7 @@ func configure(_ app: Application) async throws {
     app.migrations.add(CreateAttendanceAnalysisResult())
     app.migrations.add(AddAttendanceAnalysisResultCoreSignals())
     app.migrations.add(AddAttendanceAnalysisResultClusteringFields())
+    app.migrations.add(AddAttendanceAnalysisResultMLPFields())
     app.migrations.add(CreateAttendanceClusteringModelRecord())
     try await app.autoMigrate()
 
@@ -30,7 +31,10 @@ func makeAttendanceAnalysisManager(_ app: Application) throws -> AttendanceAnaly
         accessClient: AttendanceAccessServiceClient(client: app.client, baseURL: try ServiceEndpoints.accessBaseURL()),
         externalContextClient: AttendanceExternalContextServiceClient(client: app.client, baseURL: try ServiceEndpoints.externalContextBaseURL()),
         baselineWindowDays: try attendanceBaselineWindowDays(),
-        clusteringService: AttendanceClusteringService()
+        clusteringService: AttendanceClusteringService(),
+        mlpInferenceService: AttendanceMLPInferenceService(
+            client: AttendanceMLPServiceClient(client: app.client, baseURL: try ServiceEndpoints.mlpBaseURL())
+        )
     )
 }
 
@@ -38,7 +42,10 @@ func makeAttendanceFixtureMaterializer(_ app: Application) throws -> AttendanceF
     AttendanceFixtureMaterializer(
         externalContextClient: AttendanceExternalContextServiceClient(client: app.client, baseURL: try ServiceEndpoints.externalContextBaseURL()),
         baselineWindowDays: try attendanceBaselineWindowDays(),
-        clusteringService: AttendanceClusteringService()
+        clusteringService: AttendanceClusteringService(),
+        mlpInferenceService: AttendanceMLPInferenceService(
+            client: AttendanceMLPServiceClient(client: app.client, baseURL: try ServiceEndpoints.mlpBaseURL())
+        )
     )
 }
 

@@ -21,6 +21,12 @@ enum AttendanceClusteringStatus: String, Codable {
     case technicalOutlier = "technical_outlier"
 }
 
+enum AttendanceMLPStatus: String, Codable {
+    case notReady = "not_ready"
+    case failed = "failed"
+    case ready = "ready"
+}
+
 struct AttendanceObservationCommandRequest: Content {
     let userId: UUID
     let day: String
@@ -31,6 +37,11 @@ struct AttendanceObservationBatchCommandRequest: Content {
 }
 
 struct AttendanceClusteringCommandRequest: Content {
+    let day: String
+    let userId: UUID?
+}
+
+struct AttendanceMLPCommandRequest: Content {
     let day: String
     let userId: UUID?
 }
@@ -66,6 +77,29 @@ struct AttendanceClusteringRunItemResponse: Content {
     let status: String
     let clusteringStatus: String?
     let wasClustered: Bool
+    let result: AttendanceAnalysisResultResponse
+}
+
+struct AttendanceMLPRunResponse: Content {
+    let day: String
+    let userId: UUID?
+    let processedCount: Int
+    let inferredCount: Int
+    let failedCount: Int
+    let skippedCount: Int
+    let wasRebuilt: Bool
+    let modelVersion: String?
+    let items: [AttendanceMLPRunItemResponse]
+}
+
+struct AttendanceMLPRunItemResponse: Content {
+    let userId: UUID
+    let day: String
+    let status: String
+    let mlpStatus: String?
+    let wasInferred: Bool
+    let etaNN: Double?
+    let mlpModelVersion: String?
     let result: AttendanceAnalysisResultResponse
 }
 
@@ -111,6 +145,9 @@ struct AttendanceAnalysisResultResponse: Content {
     let clusterModelVersion: Int?
     let clusterDistance: Double?
     let clusteringStatus: String?
+    let etaNN: Double?
+    let mlpModelVersion: String?
+    let mlpStatus: String?
     let detailsJson: AttendanceAnalysisDebugDetails
     let createdAt: Date?
     let updatedAt: Date?
@@ -137,6 +174,7 @@ struct AttendanceAnalysisDebugDetails: Content, Codable, Equatable {
     let f: Double?
     let calculationNotes: [String]?
     let airAlertIntervals: [AirAlertInterval]?
+    let airAlertMinutes: Int?
     let trafficScore: Double?
     let powerScore: Double?
     let weatherScore: Double?
@@ -171,6 +209,7 @@ struct AttendanceAnalysisDebugDetails: Content, Codable, Equatable {
         f: Double?,
         calculationNotes: [String]?,
         airAlertIntervals: [AirAlertInterval]? = nil,
+        airAlertMinutes: Int? = nil,
         trafficScore: Double? = nil,
         powerScore: Double? = nil,
         weatherScore: Double? = nil,
@@ -204,6 +243,7 @@ struct AttendanceAnalysisDebugDetails: Content, Codable, Equatable {
         self.f = f
         self.calculationNotes = calculationNotes
         self.airAlertIntervals = airAlertIntervals
+        self.airAlertMinutes = airAlertMinutes
         self.trafficScore = trafficScore
         self.powerScore = powerScore
         self.weatherScore = weatherScore
@@ -272,5 +312,8 @@ struct AttendanceAnalysisResultDraft {
     let clusterModelVersion: Int?
     let clusterDistance: Double?
     let clusteringStatus: AttendanceClusteringStatus
+    let etaNN: Double?
+    let mlpModelVersion: String?
+    let mlpStatus: AttendanceMLPStatus
     let details: AttendanceAnalysisDebugDetails
 }
