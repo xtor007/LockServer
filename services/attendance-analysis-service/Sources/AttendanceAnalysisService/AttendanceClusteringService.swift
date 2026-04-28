@@ -159,7 +159,9 @@ private extension AttendanceClusteringService {
     }
 
     func loadOrTrainModel(rebuildModel: Bool, on database: Database) async throws -> AttendanceClusteringEngine.ModelSnapshot {
-        if rebuildModel == false, let currentModel = try await currentModel(on: database) {
+        if rebuildModel == false,
+           let currentModel = try await currentModel(on: database),
+           currentModel.normalization.featureSpaceVersion == AttendanceClusteringEngine.featureSpaceVersion {
             return currentModel
         }
 
@@ -368,6 +370,8 @@ private extension AttendanceClusteringService {
                     result.etaNN = nil
                     result.mlpModelVersion = nil
                     result.mlpStatus = AttendanceMLPStatus.notReady.rawValue
+                    result.riskScore = nil
+                    result.riskZone = nil
                     try await result.update(on: transaction)
                 }
                 return
@@ -432,7 +436,9 @@ private extension AttendanceClusteringService {
                     results.clustering_status = assignments.clustering_status,
                     results.eta_nn = NULL,
                     results.mlp_model_version = NULL,
-                    results.mlp_status = '\(unsafeRaw: AttendanceMLPStatus.notReady.rawValue)'
+                    results.mlp_status = '\(unsafeRaw: AttendanceMLPStatus.notReady.rawValue)',
+                    results.risk_score = NULL,
+                    results.risk_zone = NULL
                 """
             ).run()
         }

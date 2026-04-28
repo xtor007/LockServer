@@ -61,6 +61,10 @@ struct GatewayController: RouteCollection {
         attendanceAnalysis.post("mlp", "run", use: runAttendanceMLP)
         attendanceAnalysis.post("mlp", "rebuild", use: rebuildAttendanceMLP)
         attendanceAnalysis.post("mlp", "feedback", use: submitAttendanceMLPFeedback)
+        attendanceAnalysis.post("risk", "run", use: runAttendanceRisk)
+        attendanceAnalysis.post("risk", "rebuild", use: rebuildAttendanceRisk)
+        attendanceAnalysis.get("risk", "user", ":userId", use: getAttendanceRiskByUser)
+        attendanceAnalysis.get("risk", "day", ":day", use: getAttendanceRiskByDay)
         attendanceAnalysis.get("users", ":id", "observations", use: getAttendanceObservations)
         attendanceAnalysis.get("users", ":id", "observations", ":day", use: getAttendanceObservation)
         attendanceAnalysis.get("users", ":id", "results", use: getAttendanceResults)
@@ -267,6 +271,24 @@ struct GatewayController: RouteCollection {
 
     private func submitAttendanceMLPFeedback(req: Request) async throws -> Response {
         try await forwardAttendanceRequest(req, path: "/internal/attendance-analysis/mlp/feedback")
+    }
+
+    private func runAttendanceRisk(req: Request) async throws -> Response {
+        try await forwardAttendanceRequest(req, path: "/internal/attendance-analysis/risk/run")
+    }
+
+    private func rebuildAttendanceRisk(req: Request) async throws -> Response {
+        try await forwardAttendanceRequest(req, path: "/internal/attendance-analysis/risk/rebuild")
+    }
+
+    private func getAttendanceRiskByUser(req: Request) async throws -> Response {
+        let userId = try req.parameters.require("userId")
+        return try await forwardAttendanceRequest(req, path: "/internal/attendance-analysis/risk/user/\(userId)")
+    }
+
+    private func getAttendanceRiskByDay(req: Request) async throws -> Response {
+        let day = try req.parameters.require("day")
+        return try await forwardAttendanceRequest(req, path: "/internal/attendance-analysis/risk/day/\(day)")
     }
 
     private func getAttendanceObservations(req: Request) async throws -> Response {

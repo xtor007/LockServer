@@ -3,6 +3,7 @@ import Foundation
 public enum EnvironmentValueError: Error {
     case missing(String)
     case invalidInt(String, String)
+    case invalidDouble(String, String)
 }
 
 public enum EnvironmentValue {
@@ -22,6 +23,19 @@ public enum EnvironmentValue {
                 throw EnvironmentValueError.invalidInt(key, value)
             }
             return intValue
+        }
+        if let defaultValue {
+            return defaultValue
+        }
+        throw EnvironmentValueError.missing(key)
+    }
+
+    public static func double(_ key: String, default defaultValue: Double? = nil) throws -> Double {
+        if let value = ProcessInfo.processInfo.environment[key], !value.isEmpty {
+            guard let doubleValue = Double(value) else {
+                throw EnvironmentValueError.invalidDouble(key, value)
+            }
+            return doubleValue
         }
         if let defaultValue {
             return defaultValue

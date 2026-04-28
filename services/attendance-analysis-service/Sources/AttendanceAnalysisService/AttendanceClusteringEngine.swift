@@ -2,17 +2,34 @@ import Foundation
 import Vapor
 
 struct AttendanceClusteringEngine {
+    static let featureSpaceVersion = 7
+
     struct FeatureVector: Codable, Equatable {
         let zS: Double
         let zT: Double
         let f: Double
 
-        var values: [Double] {
-            [zS, zT, f]
+        var deficitMagnitude: Double {
+            max(0, -zS)
+        }
+
+        var clusteringValues: [Double] {
+            let deficitMagnitude = deficitMagnitude
+            let deficitCoupling = deficitMagnitude / (1 + deficitMagnitude)
+            let latenessMagnitude = max(0, zT)
+
+            // Early arrival is not a disciplinary risk by itself, and lateness only becomes
+            // attendance-risk relevant when it is paired with an actual time deficit.
+            // `tanh` saturates pathological z-scores from near-zero start-time variance so
+            // moderate real-world lateness is still clusterable instead of becoming an outlier.
+            let latenessImpact = tanh(latenessMagnitude / 3) * 1.5 * deficitCoupling
+            let persistenceImpact = f * deficitCoupling
+
+            return [deficitMagnitude, latenessImpact, persistenceImpact]
         }
 
         var semanticValues: [Double] {
-            [zS, abs(zT), f]
+            clusteringValues
         }
     }
 
@@ -26,6 +43,7 @@ struct AttendanceClusteringEngine {
     struct Normalization: Codable, Equatable {
         let means: [Double]
         let standardDeviations: [Double]
+        let featureSpaceVersion: Int?
     }
 
     struct ClusterDefinition: Codable, Equatable {
@@ -60,8 +78,12 @@ struct AttendanceClusteringEngine {
     }
 
     private let epsilon = 0.0001
-    private let minimumTrustRadius = 0.75
+    private let minimumTrustRadius = 1.25
+    private let trustRadiusBuffer = 0.75
+    private let softTrustRadiusMultiplier = 1.25
+    private let softTrustRadiusBuffer = 0.35
     private let maximumIterations = 50
+    private let minimumStandardDeviations = [1.0, 0.5, 0.25]
 
     func train(points: [TrainingPoint], version: Int) throws -> ModelSnapshot {
         guard points.count >= AttendanceBehaviorCluster.allCases.count else {
@@ -107,8 +129,8 @@ struct AttendanceClusteringEngine {
 
         let assignments = assignToNearestCentroids(points: normalizedPoints, centroids: centroids)
         let radii = makeTrustRadii(points: normalizedPoints, assignments: assignments, centroids: centroids)
-        let rawCentroids = centroids.map { denormalize($0, using: normalization) }
-        let definitions = matchDefinitions(to: rawCentroids)
+        let semanticCentroids = centroids.map { denormalize($0, using: normalization) }
+        let definitions = matchDefinitions(to: semanticCentroids)
 
         let clusters = centroids.indices.map { index in
             let behavior = definitions[index]
@@ -130,7 +152,22 @@ struct AttendanceClusteringEngine {
         let trustedIndices = distances.indices.filter { distances[$0] <= model.clusters[$0].trustRadius }
         let nearestDistance = round(distances.min() ?? 0)
 
-        guard let assignedIndex = trustedIndices.min(by: { distances[$0] < distances[$1] }) else {
+        let assignedIndex: Int?
+        let clusteringNotes: [String]?
+
+        if let hardMatchIndex = trustedIndices.min(by: { distances[$0] < distances[$1] }) {
+            assignedIndex = hardMatchIndex
+            clusteringNotes = nil
+        } else if let nearestIndex = distances.indices.min(by: { distances[$0] < distances[$1] }),
+                  distances[nearestIndex] <= softTrustRadius(for: model.clusters[nearestIndex]) {
+            assignedIndex = nearestIndex
+            clusteringNotes = ["assigned_with_soft_trust_radius"]
+        } else {
+            assignedIndex = nil
+            clusteringNotes = ["outside_all_cluster_trust_radii"]
+        }
+
+        guard let assignedIndex else {
             return Assignment(
                 status: .clusteringTechnicalOutlier,
                 clusteringStatus: .technicalOutlier,
@@ -139,7 +176,7 @@ struct AttendanceClusteringEngine {
                 clusterWeight: nil,
                 clusterDistance: nearestDistance,
                 clusterModelVersion: model.version,
-                clusteringNotes: ["outside_all_cluster_trust_radii"]
+                clusteringNotes: clusteringNotes
             )
         }
 
@@ -154,44 +191,48 @@ struct AttendanceClusteringEngine {
             clusterWeight: round(cluster.weight),
             clusterDistance: round(distances[assignedIndex]),
             clusterModelVersion: model.version,
-            clusteringNotes: nil
+            clusteringNotes: clusteringNotes
         )
     }
 }
 
 private extension AttendanceClusteringEngine {
     func makeNormalization(for vectors: [FeatureVector]) -> Normalization {
-        let rawVectors = vectors.map(\.values)
+        let clusteringVectors = vectors.map(\.clusteringValues)
         let means = (0..<3).map { index in
-            rawVectors.map { $0[index] }.reduce(0, +) / Double(rawVectors.count)
+            clusteringVectors.map { $0[index] }.reduce(0, +) / Double(clusteringVectors.count)
         }
         let standardDeviations = (0..<3).map { index -> Double in
-            let values = rawVectors.map { $0[index] }
+            let values = clusteringVectors.map { $0[index] }
             let variance = values.reduce(0) { partialResult, value in
                 partialResult + pow(value - means[index], 2)
             } / Double(values.count)
             let stddev = sqrt(variance)
-            return stddev > 0 ? stddev : 1
+
+            // Sparse personal history can collapse one feature's variance and make an otherwise
+            // ordinary deficit day look impossibly far from every cluster. Floors keep the
+            // normalized space numerically stable without introducing hard semantic branches.
+            return max(stddev, minimumStandardDeviations[index])
         }
 
         return Normalization(
             means: round(means),
-            standardDeviations: round(standardDeviations)
+            standardDeviations: round(standardDeviations),
+            featureSpaceVersion: Self.featureSpaceVersion
         )
     }
 
     func normalize(_ vector: FeatureVector, using normalization: Normalization) -> [Double] {
-        zip(vector.values.indices, vector.values).map { index, value in
+        let values = vector.clusteringValues
+        return zip(values.indices, values).map { index, value in
             (value - normalization.means[index]) / normalization.standardDeviations[index]
         }
     }
 
-    func denormalize(_ values: [Double], using normalization: Normalization) -> FeatureVector {
-        FeatureVector(
-            zS: values[0] * normalization.standardDeviations[0] + normalization.means[0],
-            zT: values[1] * normalization.standardDeviations[1] + normalization.means[1],
-            f: values[2] * normalization.standardDeviations[2] + normalization.means[2]
-        )
+    func denormalize(_ values: [Double], using normalization: Normalization) -> [Double] {
+        values.indices.map { index in
+            values[index] * normalization.standardDeviations[index] + normalization.means[index]
+        }
     }
 
     func makeInitialCentroids(points: [FeatureVector], normalizedPoints: [[Double]]) -> [[Double]] {
@@ -260,18 +301,20 @@ private extension AttendanceClusteringEngine {
             } / Double(sorted.count)
             let stddev = sqrt(variance)
 
-            return max(percentile, meanDistance + (2 * stddev), minimumTrustRadius)
+            // Historical clusters are sampled from sparse personal behavior traces, so nearby
+            // unseen points need a bit of tolerance instead of being pushed into outliers.
+            return max(percentile, meanDistance + (2 * stddev), minimumTrustRadius) + trustRadiusBuffer
         }
     }
 
-    func matchDefinitions(to rawCentroids: [FeatureVector]) -> [AttendanceBehaviorCluster] {
+    func matchDefinitions(to centroids: [[Double]]) -> [AttendanceBehaviorCluster] {
         let clusters = AttendanceBehaviorCluster.allCases
-        let centroidIndices = Array(rawCentroids.indices)
+        let centroidIndices = Array(centroids.indices)
         let permutations = permutations(of: Array(clusters.indices))
 
         let bestPermutation = permutations.min { lhs, rhs in
-            totalMatchingCost(centroidIndices: centroidIndices, behaviorIndices: lhs, rawCentroids: rawCentroids, behaviors: clusters) <
-                totalMatchingCost(centroidIndices: centroidIndices, behaviorIndices: rhs, rawCentroids: rawCentroids, behaviors: clusters)
+            totalMatchingCost(centroidIndices: centroidIndices, behaviorIndices: lhs, centroids: centroids, behaviors: clusters) <
+                totalMatchingCost(centroidIndices: centroidIndices, behaviorIndices: rhs, centroids: centroids, behaviors: clusters)
         } ?? Array(clusters.indices)
 
         return bestPermutation.map { clusters[$0] }
@@ -280,11 +323,11 @@ private extension AttendanceClusteringEngine {
     func totalMatchingCost(
         centroidIndices: [Int],
         behaviorIndices: [Int],
-        rawCentroids: [FeatureVector],
+        centroids: [[Double]],
         behaviors: [AttendanceBehaviorCluster]
     ) -> Double {
         zip(centroidIndices, behaviorIndices).reduce(0) { partialResult, pair in
-            partialResult + semanticDistance(from: rawCentroids[pair.0].semanticValues, to: behaviors[pair.1].semanticAnchor)
+            partialResult + semanticDistance(from: centroids[pair.0], to: behaviors[pair.1].semanticAnchor)
         }
     }
 
@@ -330,6 +373,10 @@ private extension AttendanceClusteringEngine {
         sqrt(zip(lhs, rhs).reduce(0) { partialResult, values in
             partialResult + pow(values.0 - values.1, 2)
         })
+    }
+
+    func softTrustRadius(for cluster: Cluster) -> Double {
+        max(cluster.trustRadius * softTrustRadiusMultiplier, cluster.trustRadius + softTrustRadiusBuffer)
     }
 
     func round(_ value: Double, scale: Double = 10_000) -> Double {

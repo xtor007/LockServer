@@ -42,8 +42,17 @@ curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" "$GATEWAY_URL/internal/attendan
     and any(.etaNN != null and .mlpModelVersion != null and .mlpStatus == "ready")
     and all(
       if .status == "ready_for_next_stage"
-      then (.etaNN != null and .mlpModelVersion != null and .mlpStatus == "ready")
-      else (.etaNN == null and .mlpStatus == "not_ready")
+      then (
+        .etaNN != null
+        and .mlpModelVersion != null
+        and .mlpStatus == "ready"
+        and .riskScore != null
+        and .riskZone != null
+      )
+      else (
+        .riskScore == null
+        and .riskZone == null
+      )
       end
     )
   ' >/dev/null

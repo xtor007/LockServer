@@ -70,6 +70,12 @@ final class AttendanceAnalysisResult: Model, Content {
     @OptionalField(key: "mlp_status")
     var mlpStatus: String?
 
+    @OptionalField(key: "risk_score")
+    var riskScore: Double?
+
+    @OptionalField(key: "risk_zone")
+    var riskZone: String?
+
     @Field(key: "details_json")
     var detailsJson: String
 
@@ -104,6 +110,8 @@ final class AttendanceAnalysisResult: Model, Content {
         etaNN: Double? = nil,
         mlpModelVersion: String? = nil,
         mlpStatus: String? = nil,
+        riskScore: Double? = nil,
+        riskZone: String? = nil,
         detailsJson: String
     ) {
         self.id = id ?? UUID()
@@ -128,6 +136,8 @@ final class AttendanceAnalysisResult: Model, Content {
         self.etaNN = etaNN
         self.mlpModelVersion = mlpModelVersion
         self.mlpStatus = mlpStatus
+        self.riskScore = riskScore
+        self.riskZone = riskZone
         self.detailsJson = detailsJson
     }
 }

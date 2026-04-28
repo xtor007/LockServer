@@ -11,6 +11,7 @@ struct AttendanceAnalysisManager {
     private let clusteringService: AttendanceClusteringService
     private let mlpInferenceService: AttendanceMLPInferenceService
     private let mlpFeedbackService: AttendanceMLPFeedbackService
+    private let riskScoreService: AttendanceRiskScoreService
     private let builder = AttendanceObservationBuilder()
     private let signalCalculator: AttendanceCoreSignalCalculator
     private let baselineWindowDays: Int
@@ -24,7 +25,8 @@ struct AttendanceAnalysisManager {
         baselineWindowDays: Int,
         clusteringService: AttendanceClusteringService,
         mlpInferenceService: AttendanceMLPInferenceService,
-        mlpFeedbackService: AttendanceMLPFeedbackService
+        mlpFeedbackService: AttendanceMLPFeedbackService,
+        riskScoreService: AttendanceRiskScoreService
     ) {
         self.directoryClient = directoryClient
         self.accessClient = accessClient
@@ -32,6 +34,7 @@ struct AttendanceAnalysisManager {
         self.clusteringService = clusteringService
         self.mlpInferenceService = mlpInferenceService
         self.mlpFeedbackService = mlpFeedbackService
+        self.riskScoreService = riskScoreService
         self.baselineWindowDays = max(baselineWindowDays, 1)
         self.signalCalculator = AttendanceCoreSignalCalculator(baselineWindowDays: self.baselineWindowDays)
 
@@ -241,6 +244,60 @@ struct AttendanceAnalysisManager {
             result: try makeResultResponse(from: submission.result)
         )
     }
+
+    func runRisk(
+        dayString: String,
+        userId: UUID?,
+        rebuild: Bool,
+        on database: Database
+    ) async throws -> AttendanceRiskRunResponse {
+        let day = try AttendanceDay(dayString)
+        let scope: AttendanceRiskScoreService.Scope = if let userId {
+            .userDay(userId, day)
+        } else {
+            .day(day)
+        }
+
+        let execution = try await riskScoreService.execute(scope: scope, rebuild: rebuild, on: database)
+        let processedIds = Set(execution.processedResultIds)
+        let results = try await AttendanceAnalysisResult.query(on: database)
+            .filter(\.$day == day.startOfDay)
+            .sort(\.$userId, .ascending)
+            .all()
+            .filter { result in
+                processedIds.contains(result.id ?? UUID()) &&
+                    (userId == nil || result.userId == userId)
+            }
+
+        let resultResponses = try results.map(makeResultResponse)
+        let items = resultResponses.map { result in
+            AttendanceRiskRunItemResponse(
+                userId: result.userId,
+                day: result.day,
+                status: result.status,
+                riskScore: result.riskScore,
+                riskZone: result.riskZone,
+                wasCalculated: result.id.map(execution.calculatedResultIds.contains) ?? false,
+                result: result
+            )
+        }
+
+        if userId != nil, items.isEmpty {
+            throw Abort(.notFound, reason: "Attendance analysis result not found for requested user and day")
+        }
+
+        return AttendanceRiskRunResponse(
+            day: day.stringValue,
+            userId: userId,
+            processedCount: execution.processedCount,
+            calculatedCount: execution.calculatedCount,
+            skippedCount: execution.skippedCount,
+            wasRebuilt: rebuild,
+            alpha: riskScoreService.alpha,
+            deficitWeight: riskScoreService.deficitWeight,
+            items: items
+        )
+    }
 }
 
 private extension AttendanceAnalysisManager {
@@ -333,6 +390,73 @@ extension AttendanceAnalysisManager {
             .all()
             .filter { visibleResultStatuses.contains($0.status) }
         return try results.map(makeResultResponse)
+    }
+
+    func riskResults(userId: UUID, on database: Database) async throws -> AttendanceRiskUserRecordsResponse {
+        let resultResponses = try await results(userId: userId, on: database)
+        let observationsByDay = try await observationsByDay(userId: userId, on: database)
+
+        return AttendanceRiskUserRecordsResponse(
+            userId: userId,
+            items: resultResponses.map { result in
+                AttendanceRiskUserRecordResponse(
+                    day: result.day,
+                    workDeltaMinutes: workDeltaMinutes(
+                        observation: observationsByDay[result.day],
+                        workNormMinutes: result.workNormMinutes
+                    ),
+                    cluster: result.clusterName,
+                    etaNN: result.etaNN,
+                    riskScore: result.riskScore,
+                    riskZone: result.riskZone,
+                    status: result.status,
+                    clusteringStatus: result.clusteringStatus,
+                    mlpStatus: result.mlpStatus
+                )
+            }
+        )
+    }
+
+    func riskResults(dayString: String, on database: Database) async throws -> AttendanceRiskDayRecordsResponse {
+        let day = try AttendanceDay(dayString)
+        let results = try await AttendanceAnalysisResult.query(on: database)
+            .filter(\.$day == day.startOfDay)
+            .sort(\.$userId, .ascending)
+            .all()
+            .filter { visibleResultStatuses.contains($0.status) }
+        let resultResponses = try results.map(makeResultResponse)
+        let observationsByUserId = try await observationsByUserId(day: day, on: database)
+
+        let employersById = Dictionary(
+            uniqueKeysWithValues: try await directoryClient.employers()
+                .compactMap { employer -> (UUID, EmployerModel)? in
+                    guard let employerId = employer.id, employer.isAdmin == false else {
+                        return nil
+                    }
+                    return (employerId, employer)
+                }
+        )
+
+        return AttendanceRiskDayRecordsResponse(
+            day: day.stringValue,
+            items: resultResponses.map { result in
+                let employer = employersById[result.userId]
+                return AttendanceRiskDayRecordResponse(
+                    user: makeRiskUserSummary(userId: result.userId, employer: employer),
+                    workDeltaMinutes: workDeltaMinutes(
+                        observation: observationsByUserId[result.userId],
+                        workNormMinutes: result.workNormMinutes
+                    ),
+                    cluster: result.clusterName,
+                    etaNN: result.etaNN,
+                    riskScore: result.riskScore,
+                    riskZone: result.riskZone,
+                    status: result.status,
+                    clusteringStatus: result.clusteringStatus,
+                    mlpStatus: result.mlpStatus
+                )
+            }
+        )
     }
 }
 
@@ -440,6 +564,8 @@ private extension AttendanceAnalysisManager {
             existing.etaNN = draft.etaNN
             existing.mlpModelVersion = draft.mlpModelVersion
             existing.mlpStatus = draft.mlpStatus.rawValue
+            existing.riskScore = draft.riskScore
+            existing.riskZone = draft.riskZone?.rawValue
             existing.detailsJson = detailsJson
             try await existing.update(on: database)
             return existing
@@ -467,6 +593,8 @@ private extension AttendanceAnalysisManager {
             etaNN: draft.etaNN,
             mlpModelVersion: draft.mlpModelVersion,
             mlpStatus: draft.mlpStatus.rawValue,
+            riskScore: draft.riskScore,
+            riskZone: draft.riskZone?.rawValue,
             detailsJson: detailsJson
         )
         try await result.create(on: database)
@@ -527,9 +655,50 @@ private extension AttendanceAnalysisManager {
             etaNN: result.etaNN,
             mlpModelVersion: result.mlpModelVersion,
             mlpStatus: result.mlpStatus,
+            riskScore: result.riskScore,
+            riskZone: result.riskZone,
             detailsJson: details,
             createdAt: result.createdAt,
             updatedAt: result.updatedAt
+        )
+    }
+
+    func observationsByDay(userId: UUID, on database: Database) async throws -> [String: AttendanceDayObservation] {
+        let observations = try await AttendanceDayObservation.query(on: database)
+            .filter(\.$userId == userId)
+            .sort(\.$day, .ascending)
+            .all()
+
+        return Dictionary(uniqueKeysWithValues: observations.map { observation in
+            (AttendanceDay(date: observation.day).stringValue, observation)
+        })
+    }
+
+    func observationsByUserId(day: AttendanceDay, on database: Database) async throws -> [UUID: AttendanceDayObservation] {
+        let observations = try await AttendanceDayObservation.query(on: database)
+            .filter(\.$day == day.startOfDay)
+            .sort(\.$userId, .ascending)
+            .all()
+
+        return Dictionary(uniqueKeysWithValues: observations.map { observation in
+            (observation.userId, observation)
+        })
+    }
+
+    func workDeltaMinutes(observation: AttendanceDayObservation?, workNormMinutes: Int) -> Int? {
+        guard let observation else {
+            return nil
+        }
+        return observation.workedMinutes - workNormMinutes
+    }
+
+    func makeRiskUserSummary(userId: UUID, employer: EmployerModel?) -> AttendanceRiskUserSummaryResponse {
+        AttendanceRiskUserSummaryResponse(
+            id: userId,
+            name: employer?.name,
+            surname: employer?.surname,
+            email: employer?.email,
+            department: employer?.department
         )
     }
 }
@@ -571,6 +740,8 @@ private extension AttendanceAnalysisManager {
                 etaNN: nil,
                 mlpModelVersion: nil,
                 mlpStatus: .notReady,
+                riskScore: nil,
+                riskZone: nil,
                 details: makeDebugDetails(
                     from: outcome.details,
                     snapshot: AttendanceCoreSignalCalculator.Snapshot(
@@ -620,6 +791,8 @@ private extension AttendanceAnalysisManager {
                 etaNN: nil,
                 mlpModelVersion: nil,
                 mlpStatus: .notReady,
+                riskScore: nil,
+                riskZone: nil,
                 details: makeDebugDetails(
                     from: outcome.details,
                     snapshot: AttendanceCoreSignalCalculator.Snapshot(
@@ -670,6 +843,8 @@ private extension AttendanceAnalysisManager {
                     etaNN: nil,
                     mlpModelVersion: nil,
                     mlpStatus: .notReady,
+                    riskScore: nil,
+                    riskZone: nil,
                     details: makeDebugDetails(
                         from: outcome.details,
                         snapshot: AttendanceCoreSignalCalculator.Snapshot(
@@ -730,6 +905,8 @@ private extension AttendanceAnalysisManager {
                 etaNN: nil,
                 mlpModelVersion: nil,
                 mlpStatus: .notReady,
+                riskScore: nil,
+                riskZone: nil,
                 details: makeDebugDetails(
                     from: outcome.details,
                     snapshot: calculation.snapshot,

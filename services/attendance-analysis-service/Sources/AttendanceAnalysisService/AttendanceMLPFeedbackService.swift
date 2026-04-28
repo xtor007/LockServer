@@ -32,10 +32,12 @@ struct AttendanceMLPFeedbackService {
     private let retrainingThreshold: Int
     private let decoder: JSONDecoder
     private let advisoryLockName = "attendance_mlp_feedback_retraining"
+    private let riskScoreService: AttendanceRiskScoreService?
 
-    init(client: AttendanceMLPServiceClient, retrainingThreshold: Int = 500) {
+    init(client: AttendanceMLPServiceClient, retrainingThreshold: Int = 500, riskScoreService: AttendanceRiskScoreService? = nil) {
         self.client = client
         self.retrainingThreshold = max(retrainingThreshold, 1)
+        self.riskScoreService = riskScoreService
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -69,6 +71,8 @@ struct AttendanceMLPFeedbackService {
 
             result.etaNN = etaNN
             result.mlpStatus = AttendanceMLPStatus.manuallyCorrected.rawValue
+            result.riskScore = nil
+            result.riskZone = nil
             try await result.update(on: transaction)
 
             let sample = AttendanceMLPFeedbackSample(
@@ -90,6 +94,10 @@ struct AttendanceMLPFeedbackService {
                 throw Abort(.internalServerError, reason: "Attendance MLP feedback sample id is missing")
             }
             return sampleId
+        }
+
+        if let riskScoreService {
+            _ = try await riskScoreService.execute(scope: .userDay(userId, day), rebuild: true, on: database)
         }
 
         let retrainingOutcome = await attemptAutomaticRetraining(on: database)

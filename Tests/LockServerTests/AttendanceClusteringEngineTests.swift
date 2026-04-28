@@ -8,6 +8,7 @@ final class AttendanceClusteringEngineTests: XCTestCase {
         let model = try engine.train(points: trainingPoints(), version: 1)
 
         XCTAssertEqual(model.clusters.count, 4)
+        XCTAssertEqual(model.normalization.featureSpaceVersion, AttendanceClusteringEngine.featureSpaceVersion)
 
         let stableAssignment = engine.assign(.init(zS: 1.1, zT: 0.1, f: 0.0), using: model)
         XCTAssertEqual(stableAssignment.clusterName, "Stable Normal")
@@ -15,7 +16,7 @@ final class AttendanceClusteringEngineTests: XCTestCase {
         XCTAssertEqual(stableAssignment.clusteringStatus, .stableNormalTerminal)
         XCTAssertEqual(stableAssignment.clusterScore, 0)
 
-        let flexibleAssignment = engine.assign(.init(zS: 0.15, zT: 1.95, f: 0.05), using: model)
+        let flexibleAssignment = engine.assign(.init(zS: -0.2, zT: 1.95, f: 0.05), using: model)
         XCTAssertEqual(flexibleAssignment.clusterName, "Flexible Normal")
         XCTAssertEqual(flexibleAssignment.status, .readyForNextStage)
         XCTAssertEqual(flexibleAssignment.clusterScore, 0.2)
@@ -42,6 +43,28 @@ final class AttendanceClusteringEngineTests: XCTestCase {
         XCTAssertNil(assignment.clusterScore)
         XCTAssertNotNil(assignment.clusteringNotes)
     }
+
+    func testOverworkedLateDayStaysStableBecauseItHasNoTimeDeficit() throws {
+        let model = try engine.train(points: trainingPoints(), version: 7)
+
+        let assignment = engine.assign(.init(zS: 0.8, zT: 4.0, f: 0.65), using: model)
+
+        XCTAssertEqual(assignment.clusterName, "Stable Normal")
+        XCTAssertEqual(assignment.status, .clusteringTerminalStableNormal)
+        XCTAssertEqual(assignment.clusteringStatus, .stableNormalTerminal)
+        XCTAssertEqual(assignment.clusterScore, 0)
+    }
+
+    func testModerateDeficitWithHugeLateZScoreDoesNotBecomeTechnicalOutlier() throws {
+        let model = try engine.train(points: trainingPoints(), version: 8)
+
+        let assignment = engine.assign(.init(zS: -3.0556, zT: 13.4352, f: 0.3333), using: model)
+
+        XCTAssertEqual(assignment.status, .readyForNextStage)
+        XCTAssertEqual(assignment.clusteringStatus, .readyForNextStage)
+        XCTAssertNotEqual(assignment.clusterName, AttendanceBehaviorCluster.technicalOutlierName)
+        XCTAssertNotNil(assignment.clusterScore)
+    }
 }
 
 private extension AttendanceClusteringEngineTests {
@@ -50,14 +73,16 @@ private extension AttendanceClusteringEngineTests {
             ("10000000-0000-0000-0000-000000000001", "2026-04-21", 1.0, 0.0, 0.0),
             ("10000000-0000-0000-0000-000000000002", "2026-04-22", 1.3, 0.2, 0.0),
             ("10000000-0000-0000-0000-000000000003", "2026-04-23", 0.9, -0.1, 0.0),
-            ("20000000-0000-0000-0000-000000000001", "2026-04-21", 0.2, 1.8, 0.1),
-            ("20000000-0000-0000-0000-000000000002", "2026-04-22", 0.0, -2.1, 0.05),
-            ("20000000-0000-0000-0000-000000000003", "2026-04-23", 0.3, 2.3, 0.1),
+            ("10000000-0000-0000-0000-000000000004", "2026-04-24", 1.1, 0.1, 0.55),
+            ("10000000-0000-0000-0000-000000000005", "2026-04-25", 0.8, -0.2, 0.7),
+            ("20000000-0000-0000-0000-000000000001", "2026-04-21", -0.25, 1.8, 0.1),
+            ("20000000-0000-0000-0000-000000000002", "2026-04-22", -0.1, 1.6, 0.05),
+            ("20000000-0000-0000-0000-000000000003", "2026-04-23", -0.35, 2.3, 0.1),
             ("30000000-0000-0000-0000-000000000001", "2026-04-21", -1.4, 0.5, 0.1),
             ("30000000-0000-0000-0000-000000000002", "2026-04-22", -1.8, 0.7, 0.15),
-            ("30000000-0000-0000-0000-000000000003", "2026-04-23", -1.2, -0.2, 0.2),
+            ("30000000-0000-0000-0000-000000000003", "2026-04-23", -1.2, 0.3, 0.2),
             ("40000000-0000-0000-0000-000000000001", "2026-04-21", -2.9, 1.2, 0.75),
-            ("40000000-0000-0000-0000-000000000002", "2026-04-22", -2.6, -1.0, 0.9),
+            ("40000000-0000-0000-0000-000000000002", "2026-04-22", -2.6, 0.9, 0.9),
             ("40000000-0000-0000-0000-000000000003", "2026-04-23", -3.1, 1.5, 0.85)
         ]
 

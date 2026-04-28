@@ -25,10 +25,12 @@ struct AttendanceMLPInferenceService {
     private let featureBuilder = AttendanceMLPFeatureBuilder()
     private let decoder: JSONDecoder
     private let batchSize: Int
+    private let riskScoreService: AttendanceRiskScoreService?
 
-    init(client: AttendanceMLPServiceClient, batchSize: Int = 500) {
+    init(client: AttendanceMLPServiceClient, batchSize: Int = 500, riskScoreService: AttendanceRiskScoreService? = nil) {
         self.client = client
         self.batchSize = max(batchSize, 1)
+        self.riskScoreService = riskScoreService
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -60,6 +62,9 @@ struct AttendanceMLPInferenceService {
         }
 
         guard rowsToInfer.isEmpty == false else {
+            if let riskScoreService {
+                _ = try await riskScoreService.execute(scope: riskScope(for: scope), rebuild: rebuild, on: database)
+            }
             return ExecutionSummary(
                 modelVersion: scopeRows.compactMap(\.mlpModelVersion).first,
                 processedResultIds: processedIds,
@@ -78,6 +83,10 @@ struct AttendanceMLPInferenceService {
         updates.append(contentsOf: inferenceUpdates)
 
         try await apply(updates: updates, on: database)
+
+        if let riskScoreService {
+            _ = try await riskScoreService.execute(scope: riskScope(for: scope), rebuild: rebuild, on: database)
+        }
 
         let inferredIds = Set(updates.filter { $0.mlpStatus == .ready }.map(\.resultId))
         let failedIds = Set(updates.filter { $0.mlpStatus == .failed }.map(\.resultId))
@@ -356,6 +365,8 @@ private extension AttendanceMLPInferenceService {
                     result.etaNN = update.etaNN
                     result.mlpModelVersion = update.mlpModelVersion
                     result.mlpStatus = update.mlpStatus.rawValue
+                    result.riskScore = nil
+                    result.riskZone = nil
                     try await result.update(on: transaction)
                 }
                 return
@@ -420,7 +431,9 @@ private extension AttendanceMLPInferenceService {
                 SET
                     results.eta_nn = assignments.eta_nn,
                     results.mlp_model_version = assignments.mlp_model_version,
-                    results.mlp_status = assignments.mlp_status
+                    results.mlp_status = assignments.mlp_status,
+                    results.risk_score = NULL,
+                    results.risk_zone = NULL
                 """
             ).run()
         }
@@ -428,6 +441,17 @@ private extension AttendanceMLPInferenceService {
 
     func decodeDetails(_ detailsJson: String) throws -> AttendanceAnalysisDebugDetails {
         try decoder.decode(AttendanceAnalysisDebugDetails.self, from: Data(detailsJson.utf8))
+    }
+
+    func riskScope(for scope: Scope) -> AttendanceRiskScoreService.Scope {
+        switch scope {
+        case let .userDay(userId, day):
+            return .userDay(userId, day)
+        case let .day(day):
+            return .day(day)
+        case .allEligible:
+            return .allEligible
+        }
     }
 
 }

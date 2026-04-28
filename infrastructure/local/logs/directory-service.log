@@ -7,4 +7,8 @@
 [ INFO ] [Migrator] Starting prepare [database-id: mysql, migration: DirectoryService.CreateDirectoryFinger]
 [ INFO ] [Migrator] Finished prepare [database-id: mysql, migration: DirectoryService.CreateDirectoryFinger]
 [ NOTICE ] Server started on http://127.0.0.1:8082
-[ INFO ] GET /validate [request-id: 55879DE4-B556-42BC-998B-73E15DAC0A61]
+[ INFO ] GET /validate [request-id: D0377792-7F68-426E-BC62-9D87485E2905]
+[ INFO ] GET /internal/directory/employers/33333333-3333-3333-3333-333333333333 [request-id: BE9DF15F-AF15-4297-B355-8DD2F3C42766]
+[ INFO ] GET /internal/directory/employers/90000000-0000-0000-0000-00000000001A [request-id: 09DCE557-044C-4F9E-B195-C7DB39C672AA]
+[ INFO ] GET /internal/directory/employers/33333333-3333-3333-3333-333333333333 [request-id: CEB754B7-BACC-4ABA-B18E-D13133098802]
+[ INFO ] GET /internal/directory/employers [request-id: 920AED72-B05C-4B2F-AF96-66909ED97A80]

@@ -295,6 +295,8 @@ private extension AttendanceFixtureMaterializer {
                 etaNN: nil,
                 mlpModelVersion: nil,
                 mlpStatus: .notReady,
+                riskScore: nil,
+                riskZone: nil,
                 details: makeDebugDetails(
                     from: outcome.details,
                     snapshot: AttendanceCoreSignalCalculator.Snapshot(
@@ -346,6 +348,8 @@ private extension AttendanceFixtureMaterializer {
                 etaNN: nil,
                 mlpModelVersion: nil,
                 mlpStatus: .notReady,
+                riskScore: nil,
+                riskZone: nil,
                 details: makeDebugDetails(
                     from: outcome.details,
                     snapshot: AttendanceCoreSignalCalculator.Snapshot(
@@ -398,6 +402,8 @@ private extension AttendanceFixtureMaterializer {
                     etaNN: nil,
                     mlpModelVersion: nil,
                     mlpStatus: .notReady,
+                    riskScore: nil,
+                    riskZone: nil,
                     details: makeDebugDetails(
                         from: outcome.details,
                         snapshot: AttendanceCoreSignalCalculator.Snapshot(
@@ -459,6 +465,8 @@ private extension AttendanceFixtureMaterializer {
                 etaNN: nil,
                 mlpModelVersion: nil,
                 mlpStatus: .notReady,
+                riskScore: nil,
+                riskZone: nil,
                 details: makeDebugDetails(
                     from: outcome.details,
                     snapshot: calculation.snapshot,

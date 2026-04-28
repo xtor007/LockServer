@@ -21,6 +21,10 @@ struct AttendanceAnalysisController: RouteCollection {
         attendanceAnalysis.post("mlp", "run", use: runMLP)
         attendanceAnalysis.post("mlp", "rebuild", use: rebuildMLP)
         attendanceAnalysis.post("mlp", "feedback", use: submitMLPFeedback)
+        attendanceAnalysis.post("risk", "run", use: runRisk)
+        attendanceAnalysis.post("risk", "rebuild", use: rebuildRisk)
+        attendanceAnalysis.get("risk", "user", ":userId", use: getRiskByUser)
+        attendanceAnalysis.get("risk", "day", ":day", use: getRiskByDay)
         attendanceAnalysis.get("users", ":id", "observations", use: getObservations)
         attendanceAnalysis.get("users", ":id", "observations", ":day", use: getObservation)
         attendanceAnalysis.get("users", ":id", "results", use: getResults)
@@ -112,6 +116,24 @@ struct AttendanceAnalysisController: RouteCollection {
         )
     }
 
+    private func runRisk(req: Request) async throws -> AttendanceRiskRunResponse {
+        let context = try await authClient.authenticatedContext(headers: req.headers)
+        guard context.isAdmin else {
+            throw Abort(.forbidden, reason: "Admin token required")
+        }
+        let payload = try req.content.decode(AttendanceRiskCommandRequest.self)
+        return try await manager.runRisk(dayString: payload.day, userId: payload.userId, rebuild: false, on: req.db)
+    }
+
+    private func rebuildRisk(req: Request) async throws -> AttendanceRiskRunResponse {
+        let context = try await authClient.authenticatedContext(headers: req.headers)
+        guard context.isAdmin else {
+            throw Abort(.forbidden, reason: "Admin token required")
+        }
+        let payload = try req.content.decode(AttendanceRiskCommandRequest.self)
+        return try await manager.runRisk(dayString: payload.day, userId: payload.userId, rebuild: true, on: req.db)
+    }
+
     private func getObservations(req: Request) async throws -> AttendanceDayObservationsResponse {
         let context = try await authClient.authenticatedContext(headers: req.headers)
         let userId = try req.parameters.require("id", as: UUID.self)
@@ -138,5 +160,23 @@ struct AttendanceAnalysisController: RouteCollection {
             throw Abort(.forbidden, reason: "No access to requested attendance results")
         }
         return AttendanceAnalysisResultsResponse(results: try await manager.results(userId: userId, on: req.db))
+    }
+
+    private func getRiskByUser(req: Request) async throws -> AttendanceRiskUserRecordsResponse {
+        let context = try await authClient.authenticatedContext(headers: req.headers)
+        guard context.isAdmin else {
+            throw Abort(.forbidden, reason: "Admin token required")
+        }
+        let userId = try req.parameters.require("userId", as: UUID.self)
+        return try await manager.riskResults(userId: userId, on: req.db)
+    }
+
+    private func getRiskByDay(req: Request) async throws -> AttendanceRiskDayRecordsResponse {
+        let context = try await authClient.authenticatedContext(headers: req.headers)
+        guard context.isAdmin else {
+            throw Abort(.forbidden, reason: "Admin token required")
+        }
+        let day = try req.parameters.require("day")
+        return try await manager.riskResults(dayString: day, on: req.db)
     }
 }

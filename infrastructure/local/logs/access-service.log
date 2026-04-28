@@ -1,4 +1,7 @@
 [ INFO ] [Migrator] Starting prepare [database-id: mysql, migration: AccessService.CreateAccessEnter]
 [ INFO ] [Migrator] Finished prepare [database-id: mysql, migration: AccessService.CreateAccessEnter]
 [ NOTICE ] Server started on http://127.0.0.1:8083
-[ INFO ] GET /validate [request-id: CA01BEB5-A831-4AFA-924B-0273DC5C8AC1]
+[ INFO ] GET /validate [request-id: 0F44FC72-BEDD-4970-8620-2CC74B01694F]
+[ INFO ] GET /internal/access/users/33333333-3333-3333-3333-333333333333/logs [request-id: 8061C01E-8753-4DD6-B803-765607560958]
+[ INFO ] GET /internal/access/users/90000000-0000-0000-0000-00000000001A/logs [request-id: 7A1D655E-A0E8-4EA4-AFEE-31F3DAD28AE6]
+[ INFO ] GET /internal/access/users/33333333-3333-3333-3333-333333333333/logs [request-id: 7F8555D7-8757-486D-B679-D357CBEFDA41]

@@ -37,13 +37,13 @@ enum AttendanceBehaviorCluster: String, CaseIterable, Codable {
     var semanticAnchor: [Double] {
         switch self {
         case .stableNormal:
-            return [1.2, 0.2, 0.0]
+            return [0.0, 0.0, 0.0]
         case .flexibleNormal:
-            return [0.15, 1.9, 0.1]
+            return [0.5, 0.45, 0.02]
         case .episodicDeficit:
-            return [-1.4, 0.7, 0.15]
+            return [1.4, 0.45, 0.09]
         case .systematicAnomaly:
-            return [-2.6, 1.1, 0.8]
+            return [2.6, 0.8, 0.58]
         }
     }
 

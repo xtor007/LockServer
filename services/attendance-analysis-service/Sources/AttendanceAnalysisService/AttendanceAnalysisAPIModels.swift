@@ -28,6 +28,12 @@ enum AttendanceMLPStatus: String, Codable {
     case manuallyCorrected = "manually_corrected"
 }
 
+enum AttendanceRiskZone: String, Codable {
+    case green
+    case yellow
+    case red
+}
+
 struct AttendanceObservationCommandRequest: Content {
     let userId: UUID
     let day: String
@@ -43,6 +49,11 @@ struct AttendanceClusteringCommandRequest: Content {
 }
 
 struct AttendanceMLPCommandRequest: Content {
+    let day: String
+    let userId: UUID?
+}
+
+struct AttendanceRiskCommandRequest: Content {
     let day: String
     let userId: UUID?
 }
@@ -110,6 +121,28 @@ struct AttendanceMLPRunItemResponse: Content {
     let result: AttendanceAnalysisResultResponse
 }
 
+struct AttendanceRiskRunResponse: Content {
+    let day: String
+    let userId: UUID?
+    let processedCount: Int
+    let calculatedCount: Int
+    let skippedCount: Int
+    let wasRebuilt: Bool
+    let alpha: Double
+    let deficitWeight: Double
+    let items: [AttendanceRiskRunItemResponse]
+}
+
+struct AttendanceRiskRunItemResponse: Content {
+    let userId: UUID
+    let day: String
+    let status: String
+    let riskScore: Double?
+    let riskZone: String?
+    let wasCalculated: Bool
+    let result: AttendanceAnalysisResultResponse
+}
+
 struct AttendanceMLPFeedbackResponse: Content {
     let feedbackSampleId: UUID
     let pendingFeedbackCount: Int
@@ -141,6 +174,48 @@ struct AttendanceAnalysisResultsResponse: Content {
     let results: [AttendanceAnalysisResultResponse]
 }
 
+struct AttendanceRiskUserSummaryResponse: Content {
+    let id: UUID
+    let name: String?
+    let surname: String?
+    let email: String?
+    let department: String?
+}
+
+struct AttendanceRiskUserRecordsResponse: Content {
+    let userId: UUID
+    let items: [AttendanceRiskUserRecordResponse]
+}
+
+struct AttendanceRiskUserRecordResponse: Content {
+    let day: String
+    let workDeltaMinutes: Int?
+    let cluster: String?
+    let etaNN: Double?
+    let riskScore: Double?
+    let riskZone: String?
+    let status: String
+    let clusteringStatus: String?
+    let mlpStatus: String?
+}
+
+struct AttendanceRiskDayRecordsResponse: Content {
+    let day: String
+    let items: [AttendanceRiskDayRecordResponse]
+}
+
+struct AttendanceRiskDayRecordResponse: Content {
+    let user: AttendanceRiskUserSummaryResponse
+    let workDeltaMinutes: Int?
+    let cluster: String?
+    let etaNN: Double?
+    let riskScore: Double?
+    let riskZone: String?
+    let status: String
+    let clusteringStatus: String?
+    let mlpStatus: String?
+}
+
 struct AttendanceAnalysisResultResponse: Content {
     let id: UUID?
     let userId: UUID
@@ -164,6 +239,8 @@ struct AttendanceAnalysisResultResponse: Content {
     let etaNN: Double?
     let mlpModelVersion: String?
     let mlpStatus: String?
+    let riskScore: Double?
+    let riskZone: String?
     let detailsJson: AttendanceAnalysisDebugDetails
     let createdAt: Date?
     let updatedAt: Date?
@@ -331,5 +408,7 @@ struct AttendanceAnalysisResultDraft {
     let etaNN: Double?
     let mlpModelVersion: String?
     let mlpStatus: AttendanceMLPStatus
+    let riskScore: Double?
+    let riskZone: AttendanceRiskZone?
     let details: AttendanceAnalysisDebugDetails
 }
